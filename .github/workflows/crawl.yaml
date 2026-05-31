@@ -1,0 +1,86 @@
+name: Crawl Vietlott Data
+
+on:
+  schedule:
+    # Run twice daily: 00:05 and 12:05 UTC (07:05 and 19:05 Vietnam time)
+    - cron: "5 0,12 * * *"
+  workflow_dispatch:
+    inputs:
+      products:
+        description: "Products to crawl (comma-separated, or 'all')"
+        required: false
+        default: "all"
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Crawl data
+        run: |
+          PRODUCTS="${{ github.event.inputs.products || 'all' }}"
+
+          if [ "$PRODUCTS" = "all" ]; then
+            PRODUCTS="power_655,power_645,power_535,keno,3d,3d_pro,bingo18"
+          fi
+
+          IFS=',' read -ra PRODUCT_ARRAY <<< "$PRODUCTS"
+          for product in "${PRODUCT_ARRAY[@]}"; do
+            product=$(echo "$product" | xargs)  # trim whitespace
+            echo "::group::Crawling $product"
+            uv run vietlott-crawl "$product"
+            echo "::endgroup::"
+          done
+
+      - name: Detect and fill missing data
+        run: |
+          PRODUCTS="${{ github.event.inputs.products || 'all' }}"
+
+          if [ "$PRODUCTS" = "all" ]; then
+            PRODUCTS="power_655,power_645,power_535,keno,3d,3d_pro,bingo18"
+          fi
+
+          IFS=',' read -ra PRODUCT_ARRAY <<< "$PRODUCTS"
+          for product in "${PRODUCT_ARRAY[@]}"; do
+            product=$(echo "$product" | xargs)
+            echo "::group::Checking missing data for $product"
+            uv run vietlott-missing "$product" --limit 10 || true
+            echo "::endgroup::"
+          done
+
+      - name: Regenerate docs
+        run: |
+          uv run vietlott-render-readme || true
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add data/ readme.md
+
+          # Check if there are changes
+          if git diff --cached --quiet; then
+            echo "No new data to commit"
+          else
+            TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S")
+            git commit -m "update data @ ${TIMESTAMP}"
+            git push
+          fi
