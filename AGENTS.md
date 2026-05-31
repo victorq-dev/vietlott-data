@@ -105,6 +105,47 @@ To publish a new version to PyPI:
 - **Comments**: Avoid unless absolutely necessary for complex logic
 - **Testing**: Use descriptive test names, print success messages, test data structures thoroughly
 
+## Agent Orchestration
+
+### Available Agents
+
+| Agent | Purpose | When to Use |
+|-------|---------|-------------|
+| planner | Implementation planning | Complex features, refactoring |
+| architect | System design and scalability | Architectural decisions |
+| tdd-guide | Test-driven development | New features, bug fixes |
+| code-reviewer | Code quality and maintainability | After writing/modifying code |
+| python-reviewer | Python-specific code review | Python code changes |
+| security-reviewer | Vulnerability detection | Before commits, sensitive code |
+| code-explorer | Codebase analysis | Understanding existing features |
+| code-simplifier | Code cleanup and simplification | Refactoring for clarity |
+
+### Immediate Agent Usage
+
+Use agents proactively without user prompt:
+- Complex feature requests → **planner**
+- Code just written/modified → **code-reviewer** or **python-reviewer**
+- Bug fix or new feature → **tdd-guide**
+- Architectural decision → **architect**
+- Security-sensitive code → **security-reviewer**
+
+### Parallel Task Execution
+
+Use parallel execution for independent operations — launch multiple agents simultaneously.
+
+## Development Workflow
+
+1. **Plan** -- Use planner agent, identify dependencies and risks, break into phases
+2. **TDD** -- Use tdd-guide agent, write tests first, implement, refactor
+3. **Review** -- Use code-reviewer agent immediately, address CRITICAL/HIGH issues
+4. **Commit** -- Conventional commits format, comprehensive PR summaries
+
+## Git Workflow
+
+**Commit format:** `<type>: <description>` -- Types: feat, fix, refactor, docs, test, chore, perf, ci
+
+**PR workflow:** Analyze full commit history → draft comprehensive summary → include test plan → push with `-u` flag.
+
 ## Project Structure
 - **Source code**: All code in `/src` directory
 - **CLI entry points**: Available via `vietlott-crawl` and `vietlott-missing` commands
