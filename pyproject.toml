@@ -41,6 +41,7 @@ vietlott-crawl = "vietlott.cli.crawl:crawl"
 vietlott-missing = "vietlott.cli.missing:detect_missing_data"
 vietlott-render-readme = "src.render_readme:main"
 vietlott-render-docs = "src.render_docs:main"
+vietlott-bingo18-play = "machine_learning.bingo18.cli:bingo18_play"
 
 [tool.ruff]
 line-length = 120
