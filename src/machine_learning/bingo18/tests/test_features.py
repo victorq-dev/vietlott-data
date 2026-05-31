@@ -47,8 +47,8 @@ def test_feature_names_count(sample_df):
     engineer = Bingo18FeatureEngineer(window=30)
     _, _, names = engineer.build_features(sample_df)
 
-    # freq_1..6 + gap_1..6 + sum_mean + sum_std + last_draw_0..8 + odd_ratio + even_ratio + big_ratio + streak_big + streak_small
-    expected = 6 + 6 + 2 + 9 + 2 + 1 + 2
+    # freq_1..6 + gap_1..6 + sum_mean + sum_std + last_draw_0..8 + odd_ratio + even_ratio + big_ratio + streak_big + streak_small + pair_ratio + triple_ratio + max_same_last
+    expected = 6 + 6 + 2 + 9 + 2 + 1 + 2 + 3
     assert len(names) == expected
 
 

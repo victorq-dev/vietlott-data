@@ -119,3 +119,44 @@ def test_unknown_algorithm_raises():
     model = Bingo18Model(window=30, algorithm="unknown_algo")
     with pytest.raises(ValueError, match="Unknown algorithm"):
         model.train(pd.DataFrame({"result": [[1, 2, 3]] * 100, "total": [6] * 100, "large_small": ["Nhỏ"] * 100}))
+
+
+def test_predict_total_proba(sample_df):
+    model = Bingo18Model(window=30, n_estimators=10, max_depth=2)
+    model.train(sample_df)
+
+    recent = sample_df["result"].tolist()[-30:]
+    recent_totals = sample_df["total"].tolist()[-30:]
+    recent_ls = sample_df["large_small"].tolist()[-30:]
+    X = model.feature_engineer.build_features_for_predict(recent, recent_totals, recent_ls)
+
+    total_probs = model.predict_total_proba(X)
+    assert len(total_probs) > 0
+    assert all(3 <= t <= 18 for t in total_probs.keys())
+    assert abs(sum(total_probs.values()) - 1.0) < 0.01
+
+
+def test_predict_pair_proba(sample_df):
+    model = Bingo18Model(window=30, n_estimators=10, max_depth=2)
+    model.train(sample_df)
+
+    recent = sample_df["result"].tolist()[-30:]
+    recent_totals = sample_df["total"].tolist()[-30:]
+    recent_ls = sample_df["large_small"].tolist()[-30:]
+    X = model.feature_engineer.build_features_for_predict(recent, recent_totals, recent_ls)
+
+    p_pair = model.predict_pair_proba(X)
+    assert 0 <= p_pair <= 1
+
+
+def test_predict_triple_proba(sample_df):
+    model = Bingo18Model(window=30, n_estimators=10, max_depth=2)
+    model.train(sample_df)
+
+    recent = sample_df["result"].tolist()[-30:]
+    recent_totals = sample_df["total"].tolist()[-30:]
+    recent_ls = sample_df["large_small"].tolist()[-30:]
+    X = model.feature_engineer.build_features_for_predict(recent, recent_totals, recent_ls)
+
+    p_triple = model.predict_triple_proba(X)
+    assert 0 <= p_triple <= 1

@@ -19,7 +19,18 @@ DEFAULT_ALGORITHMS = ["gradient_boosting", "random_forest", "extra_trees", "logi
 DEFAULT_WINDOWS = [10, 30, 50]
 DEFAULT_N_ESTIMATORS = [50, 100]
 DEFAULT_MAX_DEPTH = [3, 5]
-DEFAULT_BET_TYPES = ["mot_so", "hai_so_trung", "ba_so_trung", "cong_tong", "lon_hoa_nho"]
+DEFAULT_BET_TYPES = [
+    "mot_so",
+    "hai_so_trung",
+    "ba_so_trung",
+    "cong_tong",
+    "lon_hoa_nho",
+    "cong_tong_mult",
+    "lon_hoa_nho_v2",
+    "trung_2so",
+    "trung_3so",
+    "trung_3so_any",
+]
 DEFAULT_STRATEGIES = ["top_n", "threshold"]
 DEFAULT_THRESHOLDS = [0.12, 0.15]
 DEFAULT_BUDGET_LEVELS = [1_000_000, 5_000_000, 10_000_000, 50_000_000]
@@ -230,6 +241,132 @@ class Bingo18AutoTuner:
         )
 
         logger.info("Auto-tuning complete. Best results:")
+        for budget, best in best_by_budget.items():
+            logger.info(
+                f"  Budget {budget:,}: {best.bet_type}/{best.strategy} -> {best.final_budget:,} VND (ROI: {best.roi:.1f}%)"
+            )
+
+        return summary
+
+    def run_combined(
+        self,
+        df: pd.DataFrame,
+        combined_configs: list[dict[str, Any]],
+        top_k: int = 10,
+    ) -> TunerSummary:
+        """Run auto-tuning with combined betting modes.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Bingo18 data.
+        combined_configs : list[dict]
+            Each dict has: bet_types (list[str]), mode (str), confidence (float, optional)
+        top_k : int
+            Number of top results to return.
+        """
+        search_space = self._get_search_space()
+        # Add combined configs to search space
+        for config in combined_configs:
+            for algo, window, n_est, depth in product(
+                self.algorithms, self.windows, self.n_estimators, self.max_depths
+            ):
+                if algo == "logistic_regression":
+                    model_params = {"window": window, "algorithm": algo}
+                else:
+                    model_params = {"window": window, "algorithm": algo, "n_estimators": n_est, "max_depth": depth}
+                search_space.append(
+                    {
+                        "model_params": model_params,
+                        "bet_type": "+".join(config["bet_types"]),
+                        "strategy": config.get("mode", "combine"),
+                        "threshold": config.get("confidence", 0.0),
+                        "combined": config,
+                    }
+                )
+
+        total_sims = len(search_space) * len(self.budget_levels)
+        logger.info(
+            f"Combined auto-tuner: {len(search_space)} combinations × {len(self.budget_levels)} budgets = {total_sims}"
+        )
+
+        all_results: list[TunerResult] = []
+        completed = 0
+
+        for combo in search_space:
+            model_params = combo["model_params"]
+            bet_type = combo["bet_type"]
+            strategy = combo["strategy"]
+            threshold = combo["threshold"]
+            combined = combo.get("combined")
+
+            try:
+                model = Bingo18Model(**model_params)
+                model.train(df)
+            except Exception as e:
+                logger.warning(f"Failed to train {model_params}: {e}")
+                completed += len(self.budget_levels)
+                continue
+
+            for budget in self.budget_levels:
+                try:
+                    sim = Bingo18Simulator(
+                        model=model,
+                        budget=budget,
+                        bet_size=self.bet_size,
+                    )
+
+                    if combined:
+                        result = sim.run_combined(
+                            df,
+                            bet_types=combined["bet_types"],
+                            mode=combined.get("mode", "combine"),
+                            confidence_threshold=combined.get("confidence", 0.0),
+                        )
+                    else:
+                        result = sim.run(df)
+
+                    tuner_result = TunerResult(
+                        algorithm=model_params.get("algorithm", "gradient_boosting"),
+                        window=model_params.get("window", 30),
+                        n_estimators=model_params.get("n_estimators", 0),
+                        max_depth=model_params.get("max_depth", 0),
+                        bet_type=bet_type,
+                        strategy=strategy,
+                        threshold=threshold,
+                        budget=budget,
+                        final_budget=result.final_budget,
+                        roi=result.roi,
+                        bets_survived=result.total_bets,
+                        win_rate=result.win_rate,
+                        max_drawdown=result.max_drawdown,
+                        total_bets=result.total_bets,
+                    )
+                    all_results.append(tuner_result)
+                except Exception as e:
+                    logger.warning(f"Simulation failed: {e}")
+
+                completed += 1
+                if completed % 50 == 0:
+                    logger.info(f"Progress: {completed}/{total_sims}")
+
+        all_results.sort(key=lambda r: (r.final_budget, r.bets_survived), reverse=True)
+
+        best_by_budget: dict[int, TunerResult] = {}
+        for budget in self.budget_levels:
+            budget_results = [r for r in all_results if r.budget == budget]
+            if budget_results:
+                best_by_budget[budget] = budget_results[0]
+
+        summary = TunerSummary(
+            total_combinations=len(search_space),
+            total_simulations=total_sims,
+            budget_levels=self.budget_levels,
+            best_by_budget=best_by_budget,
+            top_results=all_results[:top_k],
+        )
+
+        logger.info("Combined auto-tuning complete. Best results:")
         for budget, best in best_by_budget.items():
             logger.info(
                 f"  Budget {budget:,}: {best.algorithm} + {best.bet_type} + {best.strategy} "

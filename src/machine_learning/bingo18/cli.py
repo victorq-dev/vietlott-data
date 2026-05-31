@@ -9,7 +9,7 @@ from loguru import logger
 
 from machine_learning.bingo18.model import Bingo18Model
 from machine_learning.bingo18.report import render_report, save_report
-from machine_learning.bingo18.simulator import Bingo18Simulator, BetType
+from machine_learning.bingo18.simulator import BetType, Bingo18Simulator
 
 DEFAULT_DATA_PATH = Path(__file__).parent.parent.parent.parent / "data" / "bingo18.jsonl"
 DEFAULT_MODEL_PATH = Path("bingo18_model.joblib")
@@ -27,7 +27,12 @@ def load_data(data_path: Path) -> pd.DataFrame:
     return df_pd
 
 
-@click.command()
+@click.group()
+def cli():
+    """Bingo18 ML training, simulation, and racing tools."""
+
+
+@cli.command()
 @click.option("--budget", type=int, required=True, help="Starting budget in VND")
 @click.option("--bet-size", type=int, default=10_000, help="Bet per ticket in VND (default: 10000)")
 @click.option(
@@ -70,7 +75,20 @@ def load_data(data_path: Path) -> pd.DataFrame:
     help="Directory to save models (default: models/bingo18)",
 )
 @click.option("--top-k", type=int, default=10, help="Number of top results to show/save (default: 10)")
-def bingo18_play(
+@click.option(
+    "--mode",
+    type=click.Choice(["single", "combine", "all_in", "skip"]),
+    default="single",
+    help="Betting mode: single (1 bet/draw), combine (multiple), all_in (best only), skip (low confidence)",
+)
+@click.option(
+    "--bet-types",
+    type=str,
+    default=None,
+    help="Comma-separated bet types for combined mode (e.g. 'mot_so,cong_tong_mult,trung_2so')",
+)
+@click.option("--confidence", type=float, default=0.0, help="Min confidence for skip mode (default: 0.0)")
+def play(
     budget: int,
     bet_size: int,
     bet_type: str,
@@ -91,28 +109,40 @@ def bingo18_play(
     save_best: bool,
     save_dir: str,
     top_k: int,
+    mode: str,
+    bet_types: str | None,
+    confidence: float,
 ):
     """Train ML model and simulate auto-play on Bingo18.
 
     Examples:
 
         # Single simulation
-        vietlott-bingo18-play --budget 10000000 --bet-type mot_so
+        vietlott-bingo18 play --budget 10000000 --bet-type mot_so
+
+        # Combined mode: multiple bet types per draw
+        vietlott-bingo18 play --budget 10000000 --mode combine --bet-types mot_so,cong_tong_mult,trung_2so
+
+        # All-in mode: best bet only
+        vietlott-bingo18 play --budget 10000000 --mode all_in --bet-types cong_tong_mult,lon_hoa_nho_v2
+
+        # Skip mode: only bet when confident
+        vietlott-bingo18 play --budget 10000000 --mode skip --bet-types mot_so --confidence 0.15
 
         # Auto-tune to find best strategy
-        vietlott-bingo18-play --budget 10000000 --auto-tune
-
-        # Auto-tune and save best models
-        vietlott-bingo18-play --budget 10000000 --auto-tune --save-best
+        vietlott-bingo18 play --budget 10000000 --auto-tune
 
         # Use saved model
-        vietlott-bingo18-play --budget 10000000 --model-path models/bingo18/best.joblib
+        vietlott-bingo18 play --budget 10000000 --model-path models/bingo18/best.joblib
     """
     data_path = Path(data_path)
     df = load_data(data_path)
 
     if auto_tune:
-        _run_auto_tune(df, bet_size, save_best, save_dir, top_k, output)
+        combined_configs = None
+        if bet_types and mode != "single":
+            combined_configs = [{"bet_types": bet_types.split(","), "mode": mode, "confidence": confidence}]
+        _run_auto_tune(df, bet_size, save_best, save_dir, top_k, output, combined_configs=combined_configs)
         return
 
     model = _load_or_train_model(model_path, algorithm, window, n_estimators, max_depth, df)
@@ -121,19 +151,31 @@ def bingo18_play(
         click.echo("Model trained and saved. Use without --train-only to run simulation.")
         return
 
-    _run_simulation(
-        model,
-        budget,
-        bet_size,
-        bet_type,
-        strategy,
-        top_n,
-        threshold,
-        target_total,
-        target_category,
-        output,
-        df=df,
-    )
+    if mode != "single" and bet_types:
+        _run_combined_simulation(
+            model,
+            budget,
+            bet_size,
+            bet_types.split(","),
+            mode,
+            confidence,
+            output,
+            df=df,
+        )
+    else:
+        _run_simulation(
+            model,
+            budget,
+            bet_size,
+            bet_type,
+            strategy,
+            top_n,
+            threshold,
+            target_total,
+            target_category,
+            output,
+            df=df,
+        )
 
 
 def _load_or_train_model(model_path, algorithm, window, n_estimators, max_depth, df):
@@ -183,14 +225,44 @@ def _run_simulation(
         click.echo(report)
 
 
-def _run_auto_tune(df, bet_size, save_best, save_dir, top_k, output):
+def _run_combined_simulation(model, budget, bet_size, bet_types, mode, confidence, output, df=None):
+    """Run combined simulation with multiple bet types."""
+    logger.info(
+        f"Starting combined simulation: budget={budget:,}, mode={mode}, bet_types={bet_types}, bet_size={bet_size:,}"
+    )
+
+    simulator = Bingo18Simulator(
+        model=model,
+        budget=budget,
+        bet_size=bet_size,
+    )
+    result = simulator.run_combined(
+        df,
+        bet_types=bet_types,
+        mode=mode,
+        confidence_threshold=confidence,
+    )
+
+    report = render_report(result)
+
+    if output:
+        save_report(result, Path(output))
+        click.echo(f"Report saved to {output}")
+    else:
+        click.echo(report)
+
+
+def _run_auto_tune(df, bet_size, save_best, save_dir, top_k, output, combined_configs=None):
     """Run auto-tuner."""
     from machine_learning.bingo18.auto_tuner import Bingo18AutoTuner, render_tuner_results
 
     logger.info("Starting auto-tuner...")
     tuner = Bingo18AutoTuner(bet_size=bet_size)
 
-    if save_best:
+    if combined_configs:
+        logger.info(f"Combined auto-tune mode: {combined_configs}")
+        summary = tuner.run_combined(df, combined_configs=combined_configs, top_k=top_k)
+    elif save_best:
         summary = tuner.run_and_save(df, save_dir=Path(save_dir), top_k=top_k)
     else:
         summary = tuner.run(df, top_k=top_k)
@@ -202,3 +274,226 @@ def _run_auto_tune(df, bet_size, save_best, save_dir, top_k, output):
         click.echo(f"Report saved to {output}")
     else:
         click.echo(report)
+
+
+@cli.command()
+@click.option("--budget", type=int, default=10_000_000, help="Starting budget per agent in VND")
+@click.option("--bet-size", type=int, default=10_000, help="Bet per ticket in VND")
+@click.option("--n-agents", type=int, default=12, help="Number of agents in the race")
+@click.option("--adaptation-interval", type=int, default=50, help="Draws between adaptations")
+@click.option("--share-knowledge", is_flag=True, help="Enable knowledge sharing between agents")
+@click.option("--data-path", type=click.Path(exists=True), default=None, help="Path to bingo18.jsonl")
+@click.option("--output", type=click.Path(), default=None, help="Save report to file/dir")
+@click.option("--top-k", type=int, default=10, help="Number of top agents to show")
+@click.option("--visualize", is_flag=True, help="Generate visualization charts")
+def race(
+    budget: int,
+    bet_size: int,
+    n_agents: int,
+    adaptation_interval: int,
+    share_knowledge: bool,
+    data_path: str | None,
+    output: str | None,
+    top_k: int,
+    visualize: bool,
+):
+    """Run adaptive multi-agent race on Bingo18 data.
+
+    Creates diverse agents with different strategies and runs them
+    through historical data to find the best performing approach.
+
+    Examples:
+
+        # Default race with 12 agents
+        vietlott-bingo18 race
+
+        # Custom budget and agent count
+        vietlott-bingo18 race --budget 20000000 --n-agents 20
+
+        # Enable knowledge sharing and visualization
+        vietlott-bingo18 race --share-knowledge --visualize --output results/
+    """
+    from machine_learning.bingo18.agent import create_diverse_agents
+    from machine_learning.bingo18.race import RaceCoordinator
+
+    # Load data
+    data_path_obj = Path(data_path) if data_path else DEFAULT_DATA_PATH
+    df = load_data(data_path_obj)
+
+    # Train model
+    logger.info("Training model for agent population...")
+    model = Bingo18Model()
+    metrics = model.train(df)
+    logger.info(f"Model trained: {metrics.summary()}")
+
+    # Create diverse agents
+    logger.info(f"Creating {n_agents} diverse agents (budget={budget:,}, bet_size={bet_size:,})...")
+    agents = create_diverse_agents(
+        model=model,
+        budget=budget,
+        bet_size=bet_size,
+        n_agents=n_agents,
+        adaptation_interval=adaptation_interval,
+    )
+
+    # Run race
+    logger.info(
+        f"Starting race: {n_agents} agents, adaptation_interval={adaptation_interval}, "
+        f"share_knowledge={share_knowledge}"
+    )
+    coordinator = RaceCoordinator(
+        agents=agents,
+        adaptation_interval=adaptation_interval,
+        share_knowledge=share_knowledge,
+    )
+    result = coordinator.run_race(df)
+
+    # Print leaderboard
+    _print_leaderboard(result, top_k)
+
+    # Print winner
+    if result.winner:
+        w = result.winner
+        click.echo(
+            f"\n  WINNER: {w.agent_id}\n"
+            f"    Risk Profile : {w.genome.risk_profile}\n"
+            f"    Strategy     : {w.genome.primary_strategy}\n"
+            f"    ROI          : {w.roi:+.2f}%\n"
+            f"    Final Budget : {w.final_budget:,} VND\n"
+            f"    Win Rate     : {w.win_rate:.1%}\n"
+            f"    Adaptations  : {w.adaptation_count}"
+        )
+
+    # Print race summary
+    click.echo(
+        f"\n  Race completed in {result.total_elapsed_seconds:.1f}s | "
+        f"{result.completed_agents}/{result.total_agents} agents finished | "
+        f"{result.total_draws} draws processed"
+    )
+
+    # Generate visualizations
+    if visualize:
+        viz_dir = Path(output) if output else Path("race_output")
+        _generate_visualizations(result, viz_dir)
+
+    # Save report to file
+    if output and not visualize:
+        output_path = Path(output)
+        if output_path.suffix:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            report_text = _format_report_text(result, top_k)
+            output_path.write_text(report_text, encoding="utf-8")
+            click.echo(f"\nReport saved to {output}")
+
+
+def _print_leaderboard(result, top_k: int) -> None:
+    """Print formatted leaderboard table."""
+    agents = result.agent_results[:top_k]
+    if not agents:
+        click.echo("No agent results to display.")
+        return
+
+    click.echo(f"\n{'='*110}")
+    click.echo(f"  BINGO18 AGENT RACE LEADERBOARD (Top {min(top_k, len(agents))} of {len(result.agent_results)})")
+    click.echo(f"{'='*110}")
+    click.echo(
+        f"  {'Rank':<5} {'Agent ID':<12} {'Risk':<13} {'Strategy':<10} "
+        f"{'Final Budget':>15} {'ROI':>10} {'Win Rate':>10} {'Drawdown':>12} {'Adapt':>6}"
+    )
+    click.echo(f"  {'-'*105}")
+
+    for i, agent in enumerate(agents, 1):
+        roi_str = f"{agent.roi:+.2f}%"
+        wr_str = f"{agent.win_rate:.1%}"
+        budget_str = f"{agent.final_budget:,}"
+        dd_str = f"{agent.max_drawdown:,}"
+        click.echo(
+            f"  {i:<5} {agent.agent_id:<12} {agent.genome.risk_profile:<13} "
+            f"{agent.genome.primary_strategy:<10} {budget_str:>15} "
+            f"{roi_str:>10} {wr_str:>10} {dd_str:>12} {agent.adaptation_count:>6}"
+        )
+
+    click.echo(f"{'='*110}")
+
+
+def _generate_visualizations(result, output_dir: Path) -> None:
+    """Generate and save visualization charts."""
+    from machine_learning.bingo18.visualize import generate_race_report
+
+    logger.info(f"Generating visualizations to {output_dir}...")
+
+    # Prepare data for visualization
+    agent_dicts = []
+    for ar in result.agent_results:
+        agent_dicts.append(
+            {
+                "agent_id": ar.agent_id,
+                "roi": ar.roi,
+                "final_budget": ar.final_budget,
+                "win_rate": ar.win_rate,
+                "max_drawdown": ar.max_drawdown,
+                "total_bets": ar.total_bets,
+            }
+        )
+
+    profit_curves = {ar.agent_id: ar.profit_curve for ar in result.agent_results}
+
+    # Combine bet history from all agents
+    all_bet_history = []
+    for ar in result.agent_results:
+        all_bet_history.extend(ar.bet_history)
+
+    generate_race_report(
+        agent_results=agent_dicts,
+        output_dir=output_dir,
+        starting_budget=result.budget,
+        profit_curves=profit_curves,
+        bet_history=all_bet_history,
+    )
+    click.echo(f"\nVisualizations saved to {output_dir}/")
+
+
+def _format_report_text(result, top_k: int) -> str:
+    """Format race result as text report."""
+    lines = [
+        "Bingo18 Multi-Agent Race Report",
+        "=" * 50,
+        f"Budget: {result.budget:,} VND per agent",
+        f"Bet Size: {result.bet_size:,} VND",
+        f"Total Draws: {result.total_draws}",
+        f"Adaptation Interval: {result.adaptation_interval}",
+        f"Agents: {result.completed_agents}/{result.total_agents}",
+        f"Elapsed: {result.total_elapsed_seconds:.1f}s",
+        "",
+        "Leaderboard:",
+        "-" * 100,
+        f"{'Rank':<5} {'Agent':<12} {'Risk':<13} {'Strategy':<10} "
+        f"{'Budget':>15} {'ROI':>10} {'WinRate':>10} {'Drawdown':>12} {'Adapt':>6}",
+        "-" * 100,
+    ]
+
+    for i, agent in enumerate(result.agent_results[:top_k], 1):
+        lines.append(
+            f"{i:<5} {agent.agent_id:<12} {agent.genome.risk_profile:<13} "
+            f"{agent.genome.primary_strategy:<10} {agent.final_budget:>15,} "
+            f"{agent.roi:>+10.2f}% {agent.win_rate:>10.1%} "
+            f"{agent.max_drawdown:>12,} {agent.adaptation_count:>6}"
+        )
+
+    if result.winner:
+        w = result.winner
+        lines.extend(
+            [
+                "",
+                "Winner:",
+                f"  Agent: {w.agent_id}",
+                f"  Risk Profile: {w.genome.risk_profile}",
+                f"  Strategy: {w.genome.primary_strategy}",
+                f"  ROI: {w.roi:+.2f}%",
+                f"  Final Budget: {w.final_budget:,} VND",
+                f"  Win Rate: {w.win_rate:.1%}",
+                f"  Adaptations: {w.adaptation_count}",
+            ]
+        )
+
+    return "\n".join(lines)

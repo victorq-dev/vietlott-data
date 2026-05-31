@@ -1,11 +1,16 @@
 """Auto-play simulation engine for Bingo18.
 
-Supports all 5 Bingo18 bet types based on official rules:
+Supports all Bingo18 bet types based on official rules:
 - "mot_so": Pick 1 number (1-6), win if it appears in the draw
 - "hai_so_trung": Pick a number, win if it appears at least twice
 - "ba_so_trung": Pick a number, win if all 3 draws are that number
 - "cong_tong": Pick a total (3-18), win if sum matches
 - "lon_hoa_nho": Pick Big/Draw/Small, win if total matches range
+- "cong_tong_mult": Pick total sum with multiplier-based payout
+- "lon_hoa_nho_v2": Big/Draw/Small with multiplier-based payout
+- "trung_2so": Any pair appears, x7.5
+- "trung_3so": Specific triple, x120
+- "trung_3so_any": Any triple, x20
 """
 
 from dataclasses import dataclass, field
@@ -19,6 +24,15 @@ from loguru import logger
 from machine_learning.bingo18.model import Bingo18Model
 
 
+class BettingMode(str, Enum):
+    """How to place bets across bet types."""
+
+    SINGLE = "single"  # One bet type per draw (original behavior)
+    COMBINE = "combine"  # Multiple bet types per draw
+    ALL_IN = "all_in"  # All budget on best single bet type
+    SKIP = "skip"  # Skip draws below confidence threshold
+
+
 class BetType(str, Enum):
     """Bingo18 bet types."""
 
@@ -27,6 +41,11 @@ class BetType(str, Enum):
     BA_SO_TRUNG = "ba_so_trung"  # Pick number, win if appears 3 times
     CONG_TONG = "cong_tong"  # Pick total sum
     LON_HOA_NHO = "lon_hoa_nho"  # Pick Big/Draw/Small
+    CONG_TONG_MULT = "cong_tong_mult"  # Pick total sum, multiplier-based
+    LON_HOA_NHO_V2 = "lon_hoa_nho_v2"  # Big/Draw/Small, multiplier-based
+    TRUNG_2SO = "trung_2so"  # Any pair appears
+    TRUNG_3SO = "trung_3so"  # Specific triple
+    TRUNG_3SO_ANY = "trung_3so_any"  # Any triple
 
 
 # Prize table for "Một số" (One number) bet
@@ -64,6 +83,36 @@ LON_HOA_NHO_PRIZE = {
 HAI_SO_TRUNG_PRIZE = 75_000  # At least 2 matching digits
 BA_SO_TRUNG_PRIZE = 1_200_000  # All 3 digits match (specific number)
 BA_SO_TRUNG_ANY_PRIZE = 200_000  # All 3 digits match (any triple)
+
+# Multiplier-based prize tables (payout = bet_size * multiplier)
+CONG_TONG_MULTIPLIER = {
+    3: 120.0,
+    4: 40.0,
+    5: 20.0,
+    6: 12.0,
+    7: 8.0,
+    8: 5.5,
+    9: 4.7,
+    10: 4.4,
+    11: 4.4,
+    12: 4.7,
+    13: 5.5,
+    14: 8.0,
+    15: 12.0,
+    16: 20.0,
+    17: 40.0,
+    18: 120.0,
+}
+
+LON_HOA_NHO_V2_MULTIPLIER = {
+    "Nhỏ": 1.5,  # Total 3-9
+    "Hòa": 2.0,  # Total 10-11
+    "Lớn": 1.5,  # Total 12-18
+}
+
+TRUNG_2SO_MULTIPLIER = 7.5
+TRUNG_3SO_MULTIPLIER = 120.0
+TRUNG_3SO_ANY_MULTIPLIER = 20.0
 
 
 @dataclass
@@ -193,6 +242,54 @@ def calculate_payout(bet_type: BetType, bet_value: Any, actual_digits: list[int]
             prize = LON_HOA_NHO_PRIZE.get(bet_value, 0)
             payout = int(prize * (bet_size / 10_000))
             return 1, payout
+        return 0, 0
+
+    elif bet_type == BetType.CONG_TONG_MULT:
+        # Bet on total sum, multiplier-based
+        if actual_total == bet_value:
+            mult = CONG_TONG_MULTIPLIER.get(bet_value, 0)
+            return 1, int(bet_size * mult)
+        return 0, 0
+
+    elif bet_type == BetType.LON_HOA_NHO_V2:
+        # Big/Draw/Small, multiplier-based
+        if actual_total <= 9:
+            category = "Nhỏ"
+        elif actual_total <= 11:
+            category = "Hòa"
+        else:
+            category = "Lớn"
+
+        if category == bet_value:
+            mult = LON_HOA_NHO_V2_MULTIPLIER.get(bet_value, 0)
+            return 1, int(bet_size * mult)
+        return 0, 0
+
+    elif bet_type == BetType.TRUNG_2SO:
+        # Any pair appears
+        counts = {}
+        for d in actual_digits:
+            counts[d] = counts.get(d, 0) + 1
+        max_same = max(counts.values()) if counts else 0
+        if max_same >= 2:
+            return max_same, int(bet_size * TRUNG_2SO_MULTIPLIER)
+        return 0, 0
+
+    elif bet_type == BetType.TRUNG_3SO:
+        # Specific triple
+        count = actual_digits.count(bet_value)
+        if count == 3:
+            return 3, int(bet_size * TRUNG_3SO_MULTIPLIER)
+        return count, 0
+
+    elif bet_type == BetType.TRUNG_3SO_ANY:
+        # Any triple
+        counts = {}
+        for d in actual_digits:
+            counts[d] = counts.get(d, 0) + 1
+        max_same = max(counts.values()) if counts else 0
+        if max_same >= 3:
+            return 3, int(bet_size * TRUNG_3SO_ANY_MULTIPLIER)
         return 0, 0
 
     else:
@@ -338,23 +435,44 @@ class Bingo18Simulator:
         """Select bet value based on bet_type and strategy."""
         probs = self.model.predict_proba(X)
 
-        if self.bet_type == BetType.MOT_SO:
+        if self.bet_type in (BetType.MOT_SO, BetType.HAI_SO_TRUNG, BetType.BA_SO_TRUNG, BetType.TRUNG_3SO):
             return self._select_digit(probs)
 
-        elif self.bet_type == BetType.HAI_SO_TRUNG:
-            return self._select_digit(probs)
-
-        elif self.bet_type == BetType.BA_SO_TRUNG:
-            return self._select_digit(probs)
-
-        elif self.bet_type == BetType.CONG_TONG:
+        elif self.bet_type in (BetType.CONG_TONG, BetType.CONG_TONG_MULT):
+            if self.bet_type == BetType.CONG_TONG_MULT and self.model.total_clf is not None:
+                return self._select_total_ml(X)
             return self._select_total(probs)
 
-        elif self.bet_type == BetType.LON_HOA_NHO:
+        elif self.bet_type in (BetType.LON_HOA_NHO, BetType.LON_HOA_NHO_V2):
+            if self.bet_type == BetType.LON_HOA_NHO_V2 and self.model.total_clf is not None:
+                return self._select_category_ml(X)
             return self._select_category(probs)
+
+        elif self.bet_type in (BetType.TRUNG_2SO, BetType.TRUNG_3SO_ANY):
+            return None  # No selection needed - bet on "any"
 
         else:
             raise ValueError(f"Unknown bet type: {self.bet_type}")
+
+    def _select_total_ml(self, X: np.ndarray) -> int:
+        """Select total using ML total classifier."""
+        total_probs = self.model.predict_total_proba(X)
+        if self.target_total is not None:
+            return self.target_total
+        return max(total_probs, key=lambda t: total_probs[t])
+
+    def _select_category_ml(self, X: np.ndarray) -> str:
+        """Select category using ML total classifier."""
+        if self.target_category is not None:
+            return self.target_category
+        total_probs = self.model.predict_total_proba(X)
+        p_small = sum(total_probs.get(t, 0) for t in range(3, 10))
+        p_draw = sum(total_probs.get(t, 0) for t in [10, 11])
+        p_big = sum(total_probs.get(t, 0) for t in range(12, 19))
+        return max(
+            {"Nhỏ": p_small, "Hòa": p_draw, "Lớn": p_big},
+            key=lambda c: {"Nhỏ": p_small, "Hòa": p_draw, "Lớn": p_big}[c],
+        )
 
     def _select_digit(self, probs: dict[int, float]) -> int:
         """Select digit to bet on."""
@@ -470,3 +588,258 @@ class Bingo18Simulator:
                 return d
 
         return best_digit
+
+    def run_combined(
+        self,
+        df: pd.DataFrame,
+        bet_types: list[str],
+        mode: str = "combine",
+        confidence_threshold: float = 0.0,
+    ) -> SimulationResult:
+        """Run simulation with multiple bet types per draw.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Full Bingo18 data.
+        bet_types : list[str]
+            Bet types to consider.
+        mode : str
+            "combine" = place multiple bets per draw, budget split evenly
+            "all_in" = place all budget on single best bet
+            "skip" = skip draws below confidence threshold
+        confidence_threshold : float
+            Minimum probability to place a bet (for "skip" mode).
+        """
+        window = self.model.window
+        results = df["result"].tolist()
+        totals = df["total"].tolist()
+        large_small = df["large_small"].tolist()
+        dates = df["date"].tolist()
+        ids = df["id"].tolist() if "id" in df.columns else [str(i) for i in range(len(df))]
+
+        budget = self.budget
+        max_budget = budget
+        max_drawdown = 0
+        total_bets = 0
+        wins = 0
+        losses = 0
+        bet_history = []
+        profit_curve = [budget]
+        bet_type_enums = [BetType(bt) for bt in bet_types]
+
+        start_idx = window
+        logger.info(
+            f"Starting combined simulation from draw {start_idx}, "
+            f"budget={budget:,} VND, mode={mode}, bet_types={bet_types}"
+        )
+
+        for i in range(start_idx, len(results)):
+            if budget < self.bet_size:
+                logger.info(f"Budget exhausted at draw {i}. Remaining: {budget:,} VND")
+                break
+
+            recent_draws = results[i - window : i]
+            recent_totals = totals[i - window : i]
+            recent_ls = large_small[i - window : i]
+            X = self.model.feature_engineer.build_features_for_predict(recent_draws, recent_totals, recent_ls)
+
+            # Score all bet types
+            scored_bets = self._score_bets(X, bet_type_enums)
+
+            if mode == "skip":
+                # Only bet if best score above threshold
+                if not scored_bets or scored_bets[0][0] < confidence_threshold:
+                    profit_curve.append(budget)
+                    continue
+
+            if mode == "all_in":
+                # Place all bet_size on the single best bet
+                scored_bets = scored_bets[:1]
+
+            elif mode == "combine":
+                # Place bets on all positive-score bets, budget split evenly
+                scored_bets = [(s, bt, bv) for s, bt, bv in scored_bets if s > 0]
+
+            if not scored_bets:
+                profit_curve.append(budget)
+                continue
+
+            # Calculate per-bet budget
+            n_bets = len(scored_bets)
+            per_bet = self.bet_size  # Each bet costs bet_size
+
+            if budget < per_bet * n_bets:
+                # Not enough for all bets, scale down
+                n_bets = max(1, budget // per_bet)
+                scored_bets = scored_bets[:n_bets]
+
+            for _score, bt, bv in scored_bets:
+                if budget < per_bet:
+                    break
+                budget -= per_bet
+                total_bets += 1
+
+                matches, payout = calculate_payout(bt, bv, results[i], per_bet)
+                budget += payout
+
+                if payout > 0:
+                    wins += 1
+                else:
+                    losses += 1
+
+                record = BetRecord(
+                    date=str(dates[i]),
+                    draw_id=str(ids[i]),
+                    bet_type=bt.value,
+                    bet_value=bv,
+                    actual_digits=results[i],
+                    actual_total=totals[i],
+                    matches=matches,
+                    bet_amount=per_bet,
+                    payout=payout,
+                    budget_after=budget,
+                )
+                bet_history.append(record)
+
+            if budget > max_budget:
+                max_budget = budget
+            drawdown = max_budget - budget
+            if drawdown > max_drawdown:
+                max_drawdown = drawdown
+
+            profit_curve.append(budget)
+
+        result = SimulationResult(
+            starting_budget=self.budget,
+            final_budget=budget,
+            bet_size=self.bet_size,
+            bet_type="+".join(bet_types),
+            total_bets=total_bets,
+            wins=wins,
+            losses=losses,
+            max_budget=max_budget,
+            min_budget=min(budget, min(profit_curve)),
+            max_drawdown=max_drawdown,
+            bet_history=bet_history,
+            profit_curve=profit_curve,
+        )
+
+        logger.info(
+            f"Combined simulation complete: {total_bets} bets, profit={result.profit:,} VND, ROI={result.roi:.2f}%"
+        )
+        return result
+
+    def _score_bets(self, X: np.ndarray, bet_types: list[BetType]) -> list[tuple[float, BetType, Any]]:
+        """Score all bet types by expected value. Returns sorted list of (score, bet_type, bet_value)."""
+        probs = self.model.predict_proba(X)
+        scored = []
+
+        for bt in bet_types:
+            if bt in (BetType.MOT_SO, BetType.HAI_SO_TRUNG, BetType.BA_SO_TRUNG):
+                for d, p in probs.items():
+                    ev = self._ev_digit(bt, d, p)
+                    scored.append((ev, bt, d))
+
+            elif bt == BetType.CONG_TONG:
+                for t in range(3, 19):
+                    p = self._estimate_total_prob(probs, t)
+                    ev = p * CONG_TONG_PRIZE.get(t, 0) / 10_000
+                    scored.append((ev, bt, t))
+
+            elif bt == BetType.CONG_TONG_MULT:
+                if self.model.total_clf is not None:
+                    total_probs = self.model.predict_total_proba(X)
+                    for t, p in total_probs.items():
+                        ev = p * CONG_TONG_MULTIPLIER.get(t, 0)
+                        scored.append((ev, bt, t))
+                else:
+                    for t in range(3, 19):
+                        p = self._estimate_total_prob(probs, t)
+                        ev = p * CONG_TONG_MULTIPLIER.get(t, 0)
+                        scored.append((ev, bt, t))
+
+            elif bt == BetType.LON_HOA_NHO:
+                cat_probs = self._estimate_category_probs(probs)
+                for cat, p in cat_probs.items():
+                    ev = p * LON_HOA_NHO_PRIZE.get(cat, 0) / 10_000
+                    scored.append((ev, bt, cat))
+
+            elif bt == BetType.LON_HOA_NHO_V2:
+                if self.model.total_clf is not None:
+                    total_probs = self.model.predict_total_proba(X)
+                    p_small = sum(total_probs.get(t, 0) for t in range(3, 10))
+                    p_draw = sum(total_probs.get(t, 0) for t in [10, 11])
+                    p_big = sum(total_probs.get(t, 0) for t in range(12, 19))
+                else:
+                    cat_probs = self._estimate_category_probs(probs)
+                    p_small, p_draw, p_big = cat_probs["Nhỏ"], cat_probs["Hòa"], cat_probs["Lớn"]
+                for cat, p in [("Nhỏ", p_small), ("Hòa", p_draw), ("Lớn", p_big)]:
+                    ev = p * LON_HOA_NHO_V2_MULTIPLIER.get(cat, 0)
+                    scored.append((ev, bt, cat))
+
+            elif bt == BetType.TRUNG_2SO:
+                if self.model.pair_clf is not None:
+                    p = self.model.predict_pair_proba(X)
+                else:
+                    p = self._estimate_pair_prob(probs)
+                ev = p * TRUNG_2SO_MULTIPLIER
+                scored.append((ev, bt, None))
+
+            elif bt == BetType.TRUNG_3SO:
+                for d in range(1, 7):
+                    p = probs.get(d, 0) ** 3
+                    ev = p * TRUNG_3SO_MULTIPLIER
+                    scored.append((ev, bt, d))
+
+            elif bt == BetType.TRUNG_3SO_ANY:
+                if self.model.triple_clf is not None:
+                    p = self.model.predict_triple_proba(X)
+                else:
+                    p = sum(probs.get(d, 0) ** 3 for d in range(1, 7))
+                ev = p * TRUNG_3SO_ANY_MULTIPLIER
+                scored.append((ev, bt, None))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored
+
+    def _ev_digit(self, bt: BetType, _digit: int, p: float) -> float:
+        """Estimate expected value for digit-based bets."""
+        if bt == BetType.MOT_SO:
+            return p * MOT_SO_PRIZE.get(1, 0) / 10_000
+        elif bt == BetType.HAI_SO_TRUNG:
+            return p * p * HAI_SO_TRUNG_PRIZE / 10_000  # Rough: P(2+ hits)
+        elif bt == BetType.BA_SO_TRUNG:
+            return p * p * p * BA_SO_TRUNG_PRIZE / 10_000  # Rough: P(3 hits)
+        return 0.0
+
+    def _estimate_total_prob(self, probs: dict[int, float], total: int) -> float:
+        """Estimate probability of a specific total from digit probs."""
+        if total <= 9:
+            low = np.mean([probs.get(d, 0) for d in [1, 2, 3]])
+            return low * (1 + abs(total - 10.5) * 0.05)
+        elif total <= 11:
+            return np.mean(list(probs.values()))
+        else:
+            high = np.mean([probs.get(d, 0) for d in [4, 5, 6]])
+            return high * (1 + abs(total - 10.5) * 0.05)
+
+    def _estimate_category_probs(self, probs: dict[int, float]) -> dict[str, float]:
+        """Estimate category probabilities from digit probs."""
+        low_prob = np.mean([probs.get(d, 0) for d in [1, 2, 3]])
+        high_prob = np.mean([probs.get(d, 0) for d in [4, 5, 6]])
+        p_small = low_prob * 1.5
+        p_big = high_prob * 1.5
+        p_draw = (low_prob + high_prob) / 2
+        return {"Nhỏ": p_small, "Hòa": p_draw, "Lớn": p_big}
+
+    def _estimate_pair_prob(self, probs: dict[int, float]) -> float:
+        """Estimate probability of at least 2 same digits."""
+        # Approximate: P(pair) ≈ sum over digits of P(d)^2 * (1 - P(d)) * 3 + P(d)^3
+        p_pair = 0.0
+        for d in range(1, 7):
+            p = probs.get(d, 0)
+            # P(at least 2 of digit d in 3 draws)
+            p_d2 = 3 * p * p * (1 - p) + p * p * p
+            p_pair += p_d2
+        return min(p_pair, 1.0)
