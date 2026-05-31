@@ -176,6 +176,7 @@ class AdaptiveAgent:
         self._min_budget: int = budget
         self._max_drawdown: int = 0
         self._base_bet_fraction: float = genome.base_bet_fraction
+        self._rng = np.random.default_rng()
 
     @property
     def is_alive(self) -> bool:
@@ -229,8 +230,7 @@ class AdaptiveAgent:
             return []
 
         # Exploration: random bet with exploration_rate probability
-        rng = np.random.default_rng()
-        if rng.random() < self.genome.exploration_rate:
+        if self._rng.random() < self.genome.exploration_rate:
             return self._random_bet(bet_amount, predictions)
 
         # Weighted selection of bet type
@@ -255,8 +255,7 @@ class AdaptiveAgent:
         weights_array = np.array(weights, dtype=np.float64)
         weights_array /= weights_array.sum()
 
-        rng = np.random.default_rng()
-        chosen_idx = rng.choice(len(types), p=weights_array)
+        chosen_idx = self._rng.choice(len(types), p=weights_array)
         chosen_type = types[chosen_idx]
 
         # Select bet value based on predictions
@@ -268,8 +267,7 @@ class AdaptiveAgent:
         self, bet_amount: int, predictions: dict[int, float]
     ) -> list[tuple[BetType, Any, int]]:
         """Place a random exploratory bet."""
-        rng = np.random.default_rng()
-        chosen_type = ALL_BET_TYPES[rng.integers(len(ALL_BET_TYPES))]
+        chosen_type = ALL_BET_TYPES[self._rng.integers(len(ALL_BET_TYPES))]
         bet_value = self._select_bet_value(chosen_type, predictions)
         return [(chosen_type, bet_value, bet_amount)]
 
@@ -507,7 +505,7 @@ def _calculate_bet_amount(agent: AdaptiveAgent) -> int:
     """
     # Base amount from budget fraction (integer arithmetic to avoid overflow)
     budget = min(agent.budget, 10**12)  # Cap at 1 trillion VND
-    base = (budget * int(agent._base_bet_fraction * 10000)) // 10000
+    base = (budget * round(agent._base_bet_fraction * 10000)) // 10000
 
     # Streak multiplier (integer: numerator/denominator)
     streak_num = 100  # numerator

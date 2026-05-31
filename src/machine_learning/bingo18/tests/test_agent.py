@@ -38,8 +38,8 @@ def sample_predictions():
 @pytest.fixture
 def sample_X():
     """Small synthetic feature matrix."""
-    np.random.seed(42)
-    return np.random.rand(1, 25).astype(np.float32)
+    rng = np.random.default_rng(42)
+    return rng.random((1, 25)).astype(np.float32)
 
 
 # --- Tests for AgentGenome ---

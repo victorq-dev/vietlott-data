@@ -283,7 +283,7 @@ def _run_auto_tune(df, bet_size, save_best, save_dir, top_k, output, combined_co
 @click.option("--adaptation-interval", type=int, default=50, help="Draws between adaptations")
 @click.option("--share-knowledge", is_flag=True, help="Enable knowledge sharing between agents")
 @click.option("--data-path", type=click.Path(exists=True), default=None, help="Path to bingo18.jsonl")
-@click.option("--output", type=click.Path(), default=None, help="Save report to file/dir")
+@click.option("--output", type=click.Path(), default=None, help="Output dir (with --visualize) or report file path")
 @click.option("--top-k", type=int, default=10, help="Number of top agents to show")
 @click.option("--visualize", is_flag=True, help="Generate visualization charts")
 def race(
@@ -312,6 +312,9 @@ def race(
 
         # Enable knowledge sharing and visualization
         vietlott-bingo18 race --share-knowledge --visualize --output results/
+
+        # Both --output and --visualize: charts in results/charts/, report in results/report.txt
+        vietlott-bingo18 race --visualize --output results/
     """
     from machine_learning.bingo18.agent import create_diverse_agents
     from machine_learning.bingo18.race import RaceCoordinator
@@ -373,17 +376,24 @@ def race(
 
     # Generate visualizations
     if visualize:
-        viz_dir = Path(output) if output else Path("race_output")
+        if output:
+            viz_dir = Path(output) / "charts"
+        else:
+            viz_dir = Path("race_output")
         _generate_visualizations(result, viz_dir)
 
     # Save report to file
-    if output and not visualize:
-        output_path = Path(output)
-        if output_path.suffix:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            report_text = _format_report_text(result, top_k)
-            output_path.write_text(report_text, encoding="utf-8")
-            click.echo(f"\nReport saved to {output}")
+    if output:
+        if visualize:
+            output_path = Path(output) / "report.txt"
+        else:
+            output_path = Path(output)
+            if not output_path.suffix:
+                output_path = output_path / "report.txt"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        report_text = _format_report_text(result, top_k)
+        output_path.write_text(report_text, encoding="utf-8")
+        click.echo(f"\nReport saved to {output_path}")
 
 
 def _print_leaderboard(result, top_k: int) -> None:

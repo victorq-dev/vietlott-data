@@ -91,6 +91,8 @@ def plot_profit_curves(results: dict[str, list[int]], title: str = "Agent Profit
     if not results:
         return _empty_figure("No agent results to plot")
 
+    cmap = plt.cm.get_cmap("tab10", max(len(results), 10))
+
     fig, ax = plt.subplots(figsize=FIG_SIZE_DEFAULT)
 
     # Determine starting budget from first value of each agent
@@ -100,11 +102,11 @@ def plot_profit_curves(results: dict[str, list[int]], title: str = "Agent Profit
 
     starting_budget = starting_budgets[0]
 
-    for agent_id, budgets in results.items():
+    for i, (agent_id, budgets) in enumerate(results.items()):
         if not budgets:
             continue
         roi = (budgets[-1] - budgets[0]) / budgets[0] * 100 if budgets[0] > 0 else 0
-        color = _roi_color(roi)
+        color = cmap(i)
         ax.plot(range(len(budgets)), budgets, label=agent_id, color=color, linewidth=1.5, alpha=0.85)
 
         # Highlight max drawdown region

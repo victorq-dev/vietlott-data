@@ -469,10 +469,8 @@ class Bingo18Simulator:
         p_small = sum(total_probs.get(t, 0) for t in range(3, 10))
         p_draw = sum(total_probs.get(t, 0) for t in [10, 11])
         p_big = sum(total_probs.get(t, 0) for t in range(12, 19))
-        return max(
-            {"Nhỏ": p_small, "Hòa": p_draw, "Lớn": p_big},
-            key=lambda c: {"Nhỏ": p_small, "Hòa": p_draw, "Lớn": p_big}[c],
-        )
+        cat_probs = {"Nhỏ": p_small, "Hòa": p_draw, "Lớn": p_big}
+        return max(cat_probs, key=cat_probs.get)
 
     def _select_digit(self, probs: dict[int, float]) -> int:
         """Select digit to bet on."""
@@ -808,9 +806,10 @@ class Bingo18Simulator:
         if bt == BetType.MOT_SO:
             return p * MOT_SO_PRIZE.get(1, 0) / 10_000
         elif bt == BetType.HAI_SO_TRUNG:
-            return p * p * HAI_SO_TRUNG_PRIZE / 10_000  # Rough: P(2+ hits)
+            p_at_least_2 = 3 * p * p * (1 - p) + p * p * p
+            return p_at_least_2 * HAI_SO_TRUNG_PRIZE / 10_000
         elif bt == BetType.BA_SO_TRUNG:
-            return p * p * p * BA_SO_TRUNG_PRIZE / 10_000  # Rough: P(3 hits)
+            return p ** 3 * BA_SO_TRUNG_PRIZE / 10_000
         return 0.0
 
     def _estimate_total_prob(self, probs: dict[int, float], total: int) -> float:
@@ -828,9 +827,16 @@ class Bingo18Simulator:
         """Estimate category probabilities from digit probs."""
         low_prob = np.mean([probs.get(d, 0) for d in [1, 2, 3]])
         high_prob = np.mean([probs.get(d, 0) for d in [4, 5, 6]])
-        p_small = low_prob * 1.5
-        p_big = high_prob * 1.5
-        p_draw = (low_prob + high_prob) / 2
+        p_small_raw = low_prob
+        p_big_raw = high_prob
+        p_draw_raw = (low_prob + high_prob) / 2
+        total = p_small_raw + p_draw_raw + p_big_raw
+        if total > 0:
+            p_small = p_small_raw / total
+            p_draw = p_draw_raw / total
+            p_big = p_big_raw / total
+        else:
+            p_small, p_draw, p_big = 1 / 3, 1 / 3, 1 / 3
         return {"Nhỏ": p_small, "Hòa": p_draw, "Lớn": p_big}
 
     def _estimate_pair_prob(self, probs: dict[int, float]) -> float:

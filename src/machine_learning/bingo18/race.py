@@ -193,8 +193,8 @@ class RaceCoordinator:
 
         # Create results for each agent
         agent_results = []
+        elapsed = time.perf_counter() - start_time
         for agent in self.agents:
-            elapsed = time.perf_counter() - start_time
             sim_result = agent.to_simulation_result()
             race_result = RaceAgentResult(
                 agent_id=agent.agent_id,
@@ -217,17 +217,19 @@ class RaceCoordinator:
             )
             agent_results.append(race_result)
 
-        # Sort by score (best first)
-        agent_results.sort(key=lambda r: r.score, reverse=True)
+        # Sort by ROI (best first)
+        agent_results.sort(key=lambda r: r.roi, reverse=True)
 
         total_elapsed = time.perf_counter() - start_time
         winner = agent_results[0] if agent_results else None
 
-        logger.info(
-            f"Race complete: {len(agent_results)} agents, "
-            f"winner={winner.agent_id if winner else 'N/A'} "
-            f"(ROI={winner.roi:.1f}%)" if winner else "Race complete"
-        )
+        if winner:
+            logger.info(
+                f"Race complete: {len(agent_results)} agents, "
+                f"winner={winner.agent_id} (ROI={winner.roi:.1f}%)"
+            )
+        else:
+            logger.info(f"Race complete: {len(agent_results)} agents, no winner")
 
         return RaceResult(
             total_agents=len(self.agents),

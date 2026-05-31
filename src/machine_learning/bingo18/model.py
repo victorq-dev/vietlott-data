@@ -14,7 +14,6 @@ from sklearn.ensemble import (
 )
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import brier_score_loss, log_loss
-from sklearn.multiclass import OneVsRestClassifier
 
 from machine_learning.bingo18.features import Bingo18FeatureEngineer
 
@@ -163,7 +162,7 @@ class Bingo18Model:
 
         # Train total classifier (multiclass: 3-18)
         logger.info("Training total sum classifier...")
-        self.total_clf = OneVsRestClassifier(self._create_classifier())
+        self.total_clf = self._create_classifier()
         self.total_clf.fit(X_train, y_total_train)
 
         # Train pair classifier (binary)
@@ -204,7 +203,7 @@ class Bingo18Model:
         if not self._trained or self.total_clf is None:
             raise RuntimeError("Model not trained. Call train() or load() first.")
         proba = self.total_clf.predict_proba(X)[0]
-        # OneVsRestClassifier returns probabilities for classes_ attribute
+        # Return probabilities for each class in classes_
         return {int(c): float(p) for c, p in zip(self.total_clf.classes_, proba)}
 
     def predict_pair_proba(self, X: np.ndarray) -> float:

@@ -265,6 +265,8 @@ class Bingo18AutoTuner:
         top_k : int
             Number of top results to return.
         """
+        # NOTE: iteration pattern mirrors run() above; consider extracting a shared helper
+        # if more modes are added in the future.
         search_space = self._get_search_space()
         # Add combined configs to search space
         for config in combined_configs:

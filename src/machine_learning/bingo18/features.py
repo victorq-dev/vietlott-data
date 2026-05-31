@@ -1,5 +1,7 @@
 """Feature engineering for Bingo18 lottery prediction."""
 
+from collections import Counter
+
 import numpy as np
 import pandas as pd
 from loguru import logger
@@ -147,9 +149,7 @@ class Bingo18FeatureEngineer:
         pair_count = 0
         triple_count = 0
         for draw in window_results:
-            counts = {}
-            for d in draw:
-                counts[d] = counts.get(d, 0) + 1
+            counts = Counter(draw)
             max_same = max(counts.values()) if counts else 0
             if max_same >= 2:
                 pair_count += 1
@@ -160,9 +160,7 @@ class Bingo18FeatureEngineer:
 
         # 9. Max same digits in last draw
         last = window_results[-1]
-        last_counts = {}
-        for d in last:
-            last_counts[d] = last_counts.get(d, 0) + 1
+        last_counts = Counter(last)
         features.append(max(last_counts.values()) if last_counts else 0)
 
         return np.array(features, dtype=np.float32)
