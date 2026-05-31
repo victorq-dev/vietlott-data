@@ -403,14 +403,14 @@ def _print_leaderboard(result, top_k: int) -> None:
         click.echo("No agent results to display.")
         return
 
-    click.echo(f"\n{'='*110}")
+    click.echo(f"\n{'=' * 110}")
     click.echo(f"  BINGO18 AGENT RACE LEADERBOARD (Top {min(top_k, len(agents))} of {len(result.agent_results)})")
-    click.echo(f"{'='*110}")
+    click.echo(f"{'=' * 110}")
     click.echo(
         f"  {'Rank':<5} {'Agent ID':<12} {'Risk':<13} {'Strategy':<10} "
         f"{'Final Budget':>15} {'ROI':>10} {'Win Rate':>10} {'Drawdown':>12} {'Adapt':>6}"
     )
-    click.echo(f"  {'-'*105}")
+    click.echo(f"  {'-' * 105}")
 
     for i, agent in enumerate(agents, 1):
         roi_str = f"{agent.roi:+.2f}%"
@@ -423,7 +423,7 @@ def _print_leaderboard(result, top_k: int) -> None:
             f"{roi_str:>10} {wr_str:>10} {dd_str:>12} {agent.adaptation_count:>6}"
         )
 
-    click.echo(f"{'='*110}")
+    click.echo(f"{'=' * 110}")
 
 
 def _generate_visualizations(result, output_dir: Path) -> None:

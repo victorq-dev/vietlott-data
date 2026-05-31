@@ -129,7 +129,9 @@ def plot_profit_curves(results: dict[str, list[int]], title: str = "Agent Profit
             ax.axvspan(max_dd_start, max_dd_end, alpha=0.08, color=COLOR_LOSS)
 
     # Horizontal line at starting budget
-    ax.axhline(y=starting_budget, color=COLOR_START, linestyle="--", linewidth=1, label=f"Start: {starting_budget:,} VND")
+    ax.axhline(
+        y=starting_budget, color=COLOR_START, linestyle="--", linewidth=1, label=f"Start: {starting_budget:,} VND"
+    )
 
     ax.set_xlabel("Draw Index")
     ax.set_ylabel("Budget (VND)")
@@ -396,7 +398,9 @@ def plot_bet_type_distribution(bet_history: list[BetRecord], title: str = "Bet T
 
     bet_types = sorted(type_stats.keys())
     totals = [type_stats[bt]["total"] for bt in bet_types]
-    win_rates = [type_stats[bt]["wins"] / type_stats[bt]["total"] if type_stats[bt]["total"] > 0 else 0 for bt in bet_types]
+    win_rates = [
+        type_stats[bt]["wins"] / type_stats[bt]["total"] if type_stats[bt]["total"] > 0 else 0 for bt in bet_types
+    ]
     colors = [COLORS_BET_TYPE.get(bt, COLOR_NEUTRAL) for bt in bet_types]
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=FIG_SIZE_LARGE, gridspec_kw={"width_ratios": [2, 1]})
@@ -620,9 +624,7 @@ def generate_race_report(
         wr = r.get("win_rate", 0)
         dd = r.get("max_drawdown", 0)
         bets = r.get("total_bets", 0)
-        summary_lines.append(
-            f"| {i} | {agent_id} | {roi:+.2f}% | {final:,} | {wr:.1%} | {dd:,} | {bets:,} |"
-        )
+        summary_lines.append(f"| {i} | {agent_id} | {roi:+.2f}% | {final:,} | {wr:.1%} | {dd:,} | {bets:,} |")
 
     summary_lines.append("")
 

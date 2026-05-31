@@ -160,9 +160,7 @@ class AdaptiveAgent:
         for bt_name, weight in genome.bet_type_weights:
             self._bet_type_weights[bt_name] = weight
 
-        self._bet_type_stats: dict[str, BetTypeStats] = {
-            bt.value: BetTypeStats(bt.value) for bt in BetType
-        }
+        self._bet_type_stats: dict[str, BetTypeStats] = {bt.value: BetTypeStats(bt.value) for bt in BetType}
         self._current_streak: int = 0
         self._total_bets: int = 0
         self._wins: int = 0
@@ -200,11 +198,9 @@ class AdaptiveAgent:
     @property
     def max_drawdown(self) -> int:
         """Maximum drawdown from peak budget."""
-        return self._max_budget - self._min_budget
+        return self._max_drawdown
 
-    def decide_bets(
-        self, X: np.ndarray, predictions: dict[int, float]
-    ) -> list[tuple[BetType, Any, int]]:
+    def decide_bets(self, X: np.ndarray, predictions: dict[int, float]) -> list[tuple[BetType, Any, int]]:
         """Decide which bets to place for the current draw.
 
         Parameters
@@ -236,9 +232,7 @@ class AdaptiveAgent:
         # Weighted selection of bet type
         return self._weighted_bet(bet_amount, predictions)
 
-    def _weighted_bet(
-        self, bet_amount: int, predictions: dict[int, float]
-    ) -> list[tuple[BetType, Any, int]]:
+    def _weighted_bet(self, bet_amount: int, predictions: dict[int, float]) -> list[tuple[BetType, Any, int]]:
         """Select bet using weighted random selection based on bet_type_weights."""
         # Filter to bet types that have weight > 0
         active_types = [
@@ -263,9 +257,7 @@ class AdaptiveAgent:
 
         return [(chosen_type, bet_value, bet_amount)]
 
-    def _random_bet(
-        self, bet_amount: int, predictions: dict[int, float]
-    ) -> list[tuple[BetType, Any, int]]:
+    def _random_bet(self, bet_amount: int, predictions: dict[int, float]) -> list[tuple[BetType, Any, int]]:
         """Place a random exploratory bet."""
         chosen_type = ALL_BET_TYPES[self._rng.integers(len(ALL_BET_TYPES))]
         bet_value = self._select_bet_value(chosen_type, predictions)
@@ -345,9 +337,7 @@ class AdaptiveAgent:
         self._total_bets += 1
 
         # Update bet type stats
-        self._bet_type_stats[bet_type.value].record(
-            won=won, wagered=bet_amount, payout=payout
-        )
+        self._bet_type_stats[bet_type.value].record(won=won, wagered=bet_amount, payout=payout)
 
         # Track budget extremes
         if self.budget > self._max_budget:
@@ -411,15 +401,11 @@ class AdaptiveAgent:
             if stats.roi > 0 and stats.recent_win_rate > 0.3:
                 # Good performance: increase weight
                 new_weight = current_weight * (1 + adaptation_rate)
-                log_entry["changes"].append(
-                    f"{bt_name}: weight {current_weight:.2f} -> {new_weight:.2f} (good ROI)"
-                )
+                log_entry["changes"].append(f"{bt_name}: weight {current_weight:.2f} -> {new_weight:.2f} (good ROI)")
             elif stats.roi < -20 and stats.recent_win_rate < 0.2:
                 # Poor performance: decrease weight
                 new_weight = current_weight * (1 - adaptation_rate)
-                log_entry["changes"].append(
-                    f"{bt_name}: weight {current_weight:.2f} -> {new_weight:.2f} (bad ROI)"
-                )
+                log_entry["changes"].append(f"{bt_name}: weight {current_weight:.2f} -> {new_weight:.2f} (bad ROI)")
 
             # Clamp weight
             new_weight = max(WEIGHT_MIN, min(WEIGHT_MAX, new_weight))
@@ -431,17 +417,13 @@ class AdaptiveAgent:
 
         if budget_ratio > 2.0:
             # Winning big: increase bet fraction by 20%
-            self._base_bet_fraction = min(
-                BET_FRACTION_MAX, self._base_bet_fraction * 1.2
-            )
+            self._base_bet_fraction = min(BET_FRACTION_MAX, self._base_bet_fraction * 1.2)
             log_entry["changes"].append(
                 f"bet_fraction: {old_fraction:.4f} -> {self._base_bet_fraction:.4f} (high budget)"
             )
         elif budget_ratio < 0.3:
             # Losing badly: decrease bet fraction by 20%
-            self._base_bet_fraction = max(
-                BET_FRACTION_MIN, self._base_bet_fraction * 0.8
-            )
+            self._base_bet_fraction = max(BET_FRACTION_MIN, self._base_bet_fraction * 0.8)
             log_entry["changes"].append(
                 f"bet_fraction: {old_fraction:.4f} -> {self._base_bet_fraction:.4f} (low budget)"
             )
@@ -456,16 +438,11 @@ class AdaptiveAgent:
                     current = self._bet_type_weights[bt_name]
                     # Move weight toward 1.0 (uniform)
                     self._bet_type_weights[bt_name] = current + (1.0 - current) * 0.3
-                log_entry["changes"].append(
-                    "exploration_injection: uniformizing weights (stuck)"
-                )
+                log_entry["changes"].append("exploration_injection: uniformizing weights (stuck)")
 
         self._adaptation_log.append(log_entry)
         if log_entry["changes"]:
-            logger.debug(
-                f"Agent {self.agent_id} adapted (gen {self._generation}): "
-                f"{len(log_entry['changes'])} changes"
-            )
+            logger.debug(f"Agent {self.agent_id} adapted (gen {self._generation}): {len(log_entry['changes'])} changes")
 
         return True
 

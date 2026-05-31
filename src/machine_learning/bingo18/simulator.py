@@ -809,7 +809,7 @@ class Bingo18Simulator:
             p_at_least_2 = 3 * p * p * (1 - p) + p * p * p
             return p_at_least_2 * HAI_SO_TRUNG_PRIZE / 10_000
         elif bt == BetType.BA_SO_TRUNG:
-            return p ** 3 * BA_SO_TRUNG_PRIZE / 10_000
+            return p**3 * BA_SO_TRUNG_PRIZE / 10_000
         return 0.0
 
     def _estimate_total_prob(self, probs: dict[int, float], total: int) -> float:

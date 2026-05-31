@@ -13,7 +13,6 @@ from machine_learning.bingo18.agent import (
 from machine_learning.bingo18.model import Bingo18Model
 from machine_learning.bingo18.simulator import BetType, SimulationResult
 
-
 # --- Fixtures ---
 
 
@@ -303,8 +302,13 @@ class TestRecordResult:
         genome = AgentGenome()
         agent = AdaptiveAgent(agent_id="test_r4", genome=genome, model=mock_model, budget=1_000_000)
         agent.record_result(
-            bet_type=BetType.MOT_SO, bet_value=3, bet_amount=10_000,
-            actual_digits=[3, 4, 5], actual_total=12, date="2025-01-01", draw_id="001",
+            bet_type=BetType.MOT_SO,
+            bet_value=3,
+            bet_amount=10_000,
+            actual_digits=[3, 4, 5],
+            actual_total=12,
+            date="2025-01-01",
+            draw_id="001",
         )
         assert agent._current_streak == 1
 
@@ -312,8 +316,13 @@ class TestRecordResult:
         genome = AgentGenome()
         agent = AdaptiveAgent(agent_id="test_r5", genome=genome, model=mock_model, budget=1_000_000)
         agent.record_result(
-            bet_type=BetType.MOT_SO, bet_value=3, bet_amount=10_000,
-            actual_digits=[1, 2, 4], actual_total=7, date="2025-01-01", draw_id="001",
+            bet_type=BetType.MOT_SO,
+            bet_value=3,
+            bet_amount=10_000,
+            actual_digits=[1, 2, 4],
+            actual_total=7,
+            date="2025-01-01",
+            draw_id="001",
         )
         assert agent._current_streak == -1
 
@@ -322,14 +331,24 @@ class TestRecordResult:
         agent = AdaptiveAgent(agent_id="test_r6", genome=genome, model=mock_model, budget=1_000_000)
         # Win
         agent.record_result(
-            bet_type=BetType.MOT_SO, bet_value=3, bet_amount=10_000,
-            actual_digits=[3, 4, 5], actual_total=12, date="2025-01-01", draw_id="001",
+            bet_type=BetType.MOT_SO,
+            bet_value=3,
+            bet_amount=10_000,
+            actual_digits=[3, 4, 5],
+            actual_total=12,
+            date="2025-01-01",
+            draw_id="001",
         )
         assert agent._current_streak == 1
         # Loss
         agent.record_result(
-            bet_type=BetType.MOT_SO, bet_value=3, bet_amount=10_000,
-            actual_digits=[1, 2, 4], actual_total=7, date="2025-01-02", draw_id="002",
+            bet_type=BetType.MOT_SO,
+            bet_value=3,
+            bet_amount=10_000,
+            actual_digits=[1, 2, 4],
+            actual_total=7,
+            date="2025-01-02",
+            draw_id="002",
         )
         assert agent._current_streak == -1
 
@@ -337,8 +356,13 @@ class TestRecordResult:
         genome = AgentGenome()
         agent = AdaptiveAgent(agent_id="test_r7", genome=genome, model=mock_model, budget=1_000_000)
         agent.record_result(
-            bet_type=BetType.MOT_SO, bet_value=3, bet_amount=10_000,
-            actual_digits=[3, 4, 5], actual_total=12, date="2025-01-01", draw_id="001",
+            bet_type=BetType.MOT_SO,
+            bet_value=3,
+            bet_amount=10_000,
+            actual_digits=[3, 4, 5],
+            actual_total=12,
+            date="2025-01-01",
+            draw_id="001",
         )
         stats = agent._bet_type_stats["mot_so"]
         assert stats.total_bets == 1
@@ -348,8 +372,13 @@ class TestRecordResult:
         genome = AgentGenome()
         agent = AdaptiveAgent(agent_id="test_r8", genome=genome, model=mock_model, budget=1_000_000)
         agent.record_result(
-            bet_type=BetType.MOT_SO, bet_value=3, bet_amount=10_000,
-            actual_digits=[3, 4, 5], actual_total=12, date="2025-01-01", draw_id="001",
+            bet_type=BetType.MOT_SO,
+            bet_value=3,
+            bet_amount=10_000,
+            actual_digits=[3, 4, 5],
+            actual_total=12,
+            date="2025-01-01",
+            draw_id="001",
         )
         # Initial profit_curve = [budget], then one append after record_result
         assert len(agent._profit_curve) == 2
@@ -363,8 +392,11 @@ class TestMaybeAdapt:
     def test_adapt_does_not_trigger_before_interval(self, mock_model):
         genome = AgentGenome()
         agent = AdaptiveAgent(
-            agent_id="test_a1", genome=genome, model=mock_model,
-            budget=1_000_000, adaptation_interval=50,
+            agent_id="test_a1",
+            genome=genome,
+            model=mock_model,
+            budget=1_000_000,
+            adaptation_interval=50,
         )
         agent._draws_since_adaptation = 10
         assert agent.maybe_adapt() is False
@@ -372,8 +404,11 @@ class TestMaybeAdapt:
     def test_adapt_triggers_at_interval(self, mock_model):
         genome = AgentGenome()
         agent = AdaptiveAgent(
-            agent_id="test_a2", genome=genome, model=mock_model,
-            budget=1_000_000, adaptation_interval=50,
+            agent_id="test_a2",
+            genome=genome,
+            model=mock_model,
+            budget=1_000_000,
+            adaptation_interval=50,
         )
         agent._draws_since_adaptation = 50
         # Need some bet history for adaptation to be meaningful
@@ -386,8 +421,11 @@ class TestMaybeAdapt:
     def test_adapt_resets_counter(self, mock_model):
         genome = AgentGenome()
         agent = AdaptiveAgent(
-            agent_id="test_a3", genome=genome, model=mock_model,
-            budget=1_000_000, adaptation_interval=50,
+            agent_id="test_a3",
+            genome=genome,
+            model=mock_model,
+            budget=1_000_000,
+            adaptation_interval=50,
         )
         agent._draws_since_adaptation = 50
         stats = BetTypeStats(bet_type="mot_so")
@@ -400,8 +438,11 @@ class TestMaybeAdapt:
     def test_adapt_increases_weight_on_good_roi(self, mock_model):
         genome = AgentGenome()
         agent = AdaptiveAgent(
-            agent_id="test_a4", genome=genome, model=mock_model,
-            budget=1_000_000, adaptation_interval=10,
+            agent_id="test_a4",
+            genome=genome,
+            model=mock_model,
+            budget=1_000_000,
+            adaptation_interval=10,
         )
         agent._draws_since_adaptation = 10
         # Good ROI and recent win rate
@@ -416,8 +457,11 @@ class TestMaybeAdapt:
     def test_adapt_decreases_weight_on_bad_roi(self, mock_model):
         genome = AgentGenome()
         agent = AdaptiveAgent(
-            agent_id="test_a5", genome=genome, model=mock_model,
-            budget=1_000_000, adaptation_interval=10,
+            agent_id="test_a5",
+            genome=genome,
+            model=mock_model,
+            budget=1_000_000,
+            adaptation_interval=10,
         )
         agent._draws_since_adaptation = 10
         # Bad ROI and low recent win rate
@@ -432,8 +476,12 @@ class TestMaybeAdapt:
     def test_adapt_increases_bet_fraction_on_high_budget(self, mock_model):
         genome = AgentGenome(base_bet_fraction=0.02)
         agent = AdaptiveAgent(
-            agent_id="test_a6", genome=genome, model=mock_model,
-            budget=3_000_000, bet_size=10_000, adaptation_interval=10,
+            agent_id="test_a6",
+            genome=genome,
+            model=mock_model,
+            budget=3_000_000,
+            bet_size=10_000,
+            adaptation_interval=10,
         )
         # Set starting budget artificially
         agent._starting_budget = 1_000_000
@@ -445,8 +493,12 @@ class TestMaybeAdapt:
     def test_adapt_decreases_bet_fraction_on_low_budget(self, mock_model):
         genome = AgentGenome(base_bet_fraction=0.02)
         agent = AdaptiveAgent(
-            agent_id="test_a7", genome=genome, model=mock_model,
-            budget=200_000, bet_size=10_000, adaptation_interval=10,
+            agent_id="test_a7",
+            genome=genome,
+            model=mock_model,
+            budget=200_000,
+            bet_size=10_000,
+            adaptation_interval=10,
         )
         agent._starting_budget = 1_000_000
         agent._draws_since_adaptation = 10
@@ -457,8 +509,11 @@ class TestMaybeAdapt:
     def test_adaptation_weight_clamped(self, mock_model):
         genome = AgentGenome()
         agent = AdaptiveAgent(
-            agent_id="test_a8", genome=genome, model=mock_model,
-            budget=1_000_000, adaptation_interval=10,
+            agent_id="test_a8",
+            genome=genome,
+            model=mock_model,
+            budget=1_000_000,
+            adaptation_interval=10,
         )
         agent._draws_since_adaptation = 10
         # Set weight very high, then trigger bad ROI to test clamping
@@ -539,8 +594,7 @@ class TestAgentProperties:
     def test_max_drawdown_property(self, mock_model):
         genome = AgentGenome()
         agent = AdaptiveAgent(agent_id="test_p5", genome=genome, model=mock_model, budget=1_000_000)
-        agent._max_budget = 1_200_000
-        agent._min_budget = 900_000
+        agent._max_drawdown = 300_000
         assert agent.max_drawdown == 300_000
 
 
@@ -644,8 +698,8 @@ class TestEdgeCases:
                 bet_amount=10_000,
                 actual_digits=[1, 2, 4],
                 actual_total=7,
-                date=f"2025-01-{i+1:02d}",
-                draw_id=f"{i+1:07d}",
+                date=f"2025-01-{i + 1:02d}",
+                draw_id=f"{i + 1:07d}",
             )
         assert agent._wins == 0
         assert agent._losses == 10

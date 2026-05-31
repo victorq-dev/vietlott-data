@@ -18,7 +18,6 @@ from machine_learning.bingo18.race import (
 )
 from machine_learning.bingo18.simulator import BetRecord, BetType, SimulationResult
 
-
 # --- Fixtures ---
 
 
@@ -63,13 +62,15 @@ def _make_synthetic_df(n_draws: int, seed: int = 42) -> pd.DataFrame:
         dates.append(f"2025-01-{(i % 28) + 1:02d}")
         ids.append(f"{i + 1:07d}")
 
-    return pd.DataFrame({
-        "result": results,
-        "total": totals,
-        "large_small": large_smalls,
-        "date": dates,
-        "id": ids,
-    })
+    return pd.DataFrame(
+        {
+            "result": results,
+            "total": totals,
+            "large_small": large_smalls,
+            "date": dates,
+            "id": ids,
+        }
+    )
 
 
 def _make_small_agents(model, n: int = 3, budget: int = 500_000) -> list[AdaptiveAgent]:
@@ -148,7 +149,10 @@ class TestRaceAgentResult:
             profit_curve=[],
             bet_history=[],
             simulation_result=SimulationResult(
-                starting_budget=1_000_000, final_budget=1_200_000, bet_size=10_000, bet_type="adaptive",
+                starting_budget=1_000_000,
+                final_budget=1_200_000,
+                bet_size=10_000,
+                bet_type="adaptive",
             ),
             elapsed_seconds=0.0,
         )
@@ -179,7 +183,10 @@ class TestRaceResult:
                 profit_curve=[],
                 bet_history=[],
                 simulation_result=SimulationResult(
-                    starting_budget=1_000_000, final_budget=1_500_000, bet_size=10_000, bet_type="adaptive",
+                    starting_budget=1_000_000,
+                    final_budget=1_500_000,
+                    bet_size=10_000,
+                    bet_type="adaptive",
                 ),
                 elapsed_seconds=1.0,
             ),
@@ -200,7 +207,10 @@ class TestRaceResult:
                 profit_curve=[],
                 bet_history=[],
                 simulation_result=SimulationResult(
-                    starting_budget=1_000_000, final_budget=800_000, bet_size=10_000, bet_type="adaptive",
+                    starting_budget=1_000_000,
+                    final_budget=800_000,
+                    bet_size=10_000,
+                    bet_type="adaptive",
                 ),
                 elapsed_seconds=1.0,
             ),

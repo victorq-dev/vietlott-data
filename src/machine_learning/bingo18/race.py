@@ -224,10 +224,7 @@ class RaceCoordinator:
         winner = agent_results[0] if agent_results else None
 
         if winner:
-            logger.info(
-                f"Race complete: {len(agent_results)} agents, "
-                f"winner={winner.agent_id} (ROI={winner.roi:.1f}%)"
-            )
+            logger.info(f"Race complete: {len(agent_results)} agents, winner={winner.agent_id} (ROI={winner.roi:.1f}%)")
         else:
             logger.info(f"Race complete: {len(agent_results)} agents, no winner")
 
@@ -276,7 +273,9 @@ class RaceCoordinator:
                 current = agent._bet_type_weights.get(bt_name, 1.0)
                 agent._bet_type_weights[bt_name] = min(current + nudge_amount, 5.0)
 
-        logger.debug(f"Knowledge shared: top bet types {[bt for bt, _ in sorted(top_bet_types.items(), key=lambda x: x[1], reverse=True)[:3]]}")
+        logger.debug(
+            f"Knowledge shared: top bet types {[bt for bt, _ in sorted(top_bet_types.items(), key=lambda x: x[1], reverse=True)[:3]]}"
+        )
 
 
 def _get_predictions(agent: AdaptiveAgent, X: np.ndarray) -> dict[int, float] | None:
