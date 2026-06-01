@@ -170,9 +170,11 @@ class RaceCoordinator:
                     continue
 
                 # Agent decides bets
+                balance_before = agent.budget
                 bets = agent.decide_bets(X, predictions)
 
                 # Process each bet
+                bet_details = []
                 for bet_type, bet_value, bet_amount in bets:
                     agent.record_result(
                         bet_type=bet_type,
@@ -183,9 +185,29 @@ class RaceCoordinator:
                         date=date,
                         draw_id=draw_id,
                     )
+                    bet_details.append(f"{bet_type.value}({bet_value})={bet_amount:,}")
+
+                balance_after = agent.budget
+                net = balance_after - balance_before
+                logger.debug(
+                    f"[{agent.agent_id}] Draw {i}: "
+                    f"bets=[{', '.join(bet_details)}] | "
+                    f"result={actual_digits} total={actual_total} | "
+                    f"balance {balance_before:,} -> {balance_after:,} ({net:+,})"
+                )
+
+                if not agent.is_alive:
+                    logger.info(f"[{agent.agent_id}] BANKRUPT at draw {i}, final balance={agent.budget:,}")
 
                 # Check adaptation
-                agent.maybe_adapt()
+                if agent.maybe_adapt():
+                    logger.debug(f"[{agent.agent_id}] Adapted (gen {agent._generation})")
+
+            # Periodic progress logging
+            if (i - start_idx) % 5000 == 0 and i > start_idx:
+                alive = [a for a in self.agents if a.is_alive]
+                budgets = [f"{a.agent_id}:{a.budget:,}" for a in alive[:6]]
+                logger.info(f"Progress draw {i}/{n_draws} | alive={len(alive)} | budgets=[{', '.join(budgets)}]")
 
             # Optional: knowledge sharing
             if self.share_knowledge and (i - start_idx) % self.knowledge_share_interval == 0 and i > start_idx:

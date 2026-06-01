@@ -289,6 +289,7 @@ def _run_auto_tune(df, bet_size, save_best, save_dir, top_k, output, combined_co
 @click.option("--output", type=click.Path(), default=None, help="Output dir (with --visualize) or report file path")
 @click.option("--top-k", type=int, default=10, help="Number of top agents to show")
 @click.option("--visualize", is_flag=True, help="Generate visualization charts")
+@click.option("--verbose", "-v", is_flag=True, help="Show per-agent bet details (DEBUG logs)")
 def race(
     budget: int,
     bet_size: int,
@@ -299,6 +300,7 @@ def race(
     output: str | None,
     top_k: int,
     visualize: bool,
+    verbose: bool,
 ):
     """Run adaptive multi-agent race on Bingo18 data.
 
@@ -321,6 +323,11 @@ def race(
     """
     from machine_learning.bingo18.agent import create_diverse_agents
     from machine_learning.bingo18.race import RaceCoordinator
+
+    # Enable DEBUG logging if verbose
+    if verbose:
+        logger.remove()
+        logger.add(sys.stderr, format="<level>{level: <8}</level> | {message}", level="DEBUG")
 
     # Load data
     data_path_obj = Path(data_path) if data_path else DEFAULT_DATA_PATH

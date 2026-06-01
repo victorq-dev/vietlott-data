@@ -297,14 +297,22 @@ def test_lon_hoa_nho_v2_lon():
 
 
 def test_trung_2so_hit():
-    """Any pair: 10k * 7.5 = 75k."""
-    matches, payout = calculate_payout(BetType.TRUNG_2SO, None, [3, 3, 5], 10_000)
-    assert matches >= 2
+    """Specific digit pair: bet on 3, draw [3,3,5] = 10k * 7.5 = 75k."""
+    matches, payout = calculate_payout(BetType.TRUNG_2SO, 3, [3, 3, 5], 10_000)
+    assert matches == 2
     assert payout == 75_000
 
 
 def test_trung_2so_miss():
-    matches, payout = calculate_payout(BetType.TRUNG_2SO, None, [1, 2, 3], 10_000)
+    """Specific digit pair: bet on 4, draw [1, 2, 3] = no match."""
+    matches, payout = calculate_payout(BetType.TRUNG_2SO, 4, [1, 2, 3], 10_000)
+    assert matches == 0
+    assert payout == 0
+
+
+def test_trung_2so_wrong_digit():
+    """Specific digit pair: bet on 1, draw [3, 3, 5] = digit 1 not paired."""
+    matches, payout = calculate_payout(BetType.TRUNG_2SO, 1, [3, 3, 5], 10_000)
     assert matches == 0
     assert payout == 0
 
@@ -323,14 +331,22 @@ def test_trung_3so_specific_miss():
 
 
 def test_trung_3so_any_hit():
-    """Any triple: 10k * 20 = 200k."""
-    matches, payout = calculate_payout(BetType.TRUNG_3SO_ANY, None, [4, 4, 4], 10_000)
+    """Specific digit triple: bet on 4, draw [4,4,4] = 10k * 20 = 200k."""
+    matches, payout = calculate_payout(BetType.TRUNG_3SO_ANY, 4, [4, 4, 4], 10_000)
     assert matches == 3
     assert payout == 200_000
 
 
 def test_trung_3so_any_miss():
-    matches, payout = calculate_payout(BetType.TRUNG_3SO_ANY, None, [1, 2, 3], 10_000)
+    """Specific digit triple: bet on 4, draw [1, 2, 3] = no match."""
+    matches, payout = calculate_payout(BetType.TRUNG_3SO_ANY, 4, [1, 2, 3], 10_000)
+    assert matches == 0
+    assert payout == 0
+
+
+def test_trung_3so_any_wrong_digit():
+    """Specific digit triple: bet on 5, draw [4, 4, 4] = digit 5 not tripled."""
+    matches, payout = calculate_payout(BetType.TRUNG_3SO_ANY, 5, [4, 4, 4], 10_000)
     assert matches == 0
     assert payout == 0
 
