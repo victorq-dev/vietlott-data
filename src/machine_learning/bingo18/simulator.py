@@ -10,7 +10,7 @@ Supports all Bingo18 bet types based on official rules:
 - "lon_hoa_nho_v2": Big/Draw/Small with multiplier-based payout
 - "trung_2so": Any pair appears, x7.5
 - "trung_3so": Specific triple, x120
-- "trung_3so_any": Any triple, x20
+- "trung_3so_any": Specific digit triple, x20
 """
 
 from dataclasses import dataclass, field
@@ -43,9 +43,9 @@ class BetType(str, Enum):
     LON_HOA_NHO = "lon_hoa_nho"  # Pick Big/Draw/Small
     CONG_TONG_MULT = "cong_tong_mult"  # Pick total sum, multiplier-based
     LON_HOA_NHO_V2 = "lon_hoa_nho_v2"  # Big/Draw/Small, multiplier-based
-    TRUNG_2SO = "trung_2so"  # Any pair appears
+    TRUNG_2SO = "trung_2so"  # Specific digit pair (must pick digit 1-6)
     TRUNG_3SO = "trung_3so"  # Specific triple
-    TRUNG_3SO_ANY = "trung_3so_any"  # Any triple
+    TRUNG_3SO_ANY = "trung_3so_any"  # Specific digit triple (must pick digit 1-6)
 
 
 # Prize table for "Một số" (One number) bet
@@ -266,13 +266,10 @@ def calculate_payout(bet_type: BetType, bet_value: Any, actual_digits: list[int]
         return 0, 0
 
     elif bet_type == BetType.TRUNG_2SO:
-        # Any pair appears
-        counts = {}
-        for d in actual_digits:
-            counts[d] = counts.get(d, 0) + 1
-        max_same = max(counts.values()) if counts else 0
-        if max_same >= 2:
-            return max_same, int(bet_size * TRUNG_2SO_MULTIPLIER)
+        # Specific digit pair - must pick digit 1-6, win if it appears 2+
+        count = actual_digits.count(bet_value)
+        if count >= 2:
+            return count, int(bet_size * TRUNG_2SO_MULTIPLIER)
         return 0, 0
 
     elif bet_type == BetType.TRUNG_3SO:
@@ -283,13 +280,10 @@ def calculate_payout(bet_type: BetType, bet_value: Any, actual_digits: list[int]
         return count, 0
 
     elif bet_type == BetType.TRUNG_3SO_ANY:
-        # Any triple
-        counts = {}
-        for d in actual_digits:
-            counts[d] = counts.get(d, 0) + 1
-        max_same = max(counts.values()) if counts else 0
-        if max_same >= 3:
-            return 3, int(bet_size * TRUNG_3SO_ANY_MULTIPLIER)
+        # Specific digit triple - must pick digit 1-6, win if all 3 match
+        count = actual_digits.count(bet_value)
+        if count >= 3:
+            return count, int(bet_size * TRUNG_3SO_ANY_MULTIPLIER)
         return 0, 0
 
     else:
@@ -435,7 +429,7 @@ class Bingo18Simulator:
         """Select bet value based on bet_type and strategy."""
         probs = self.model.predict_proba(X)
 
-        if self.bet_type in (BetType.MOT_SO, BetType.HAI_SO_TRUNG, BetType.BA_SO_TRUNG, BetType.TRUNG_3SO):
+        if self.bet_type in (BetType.MOT_SO, BetType.HAI_SO_TRUNG, BetType.BA_SO_TRUNG, BetType.TRUNG_3SO, BetType.TRUNG_2SO):
             return self._select_digit(probs)
 
         elif self.bet_type in (BetType.CONG_TONG, BetType.CONG_TONG_MULT):
@@ -448,8 +442,8 @@ class Bingo18Simulator:
                 return self._select_category_ml(X)
             return self._select_category(probs)
 
-        elif self.bet_type in (BetType.TRUNG_2SO, BetType.TRUNG_3SO_ANY):
-            return None  # No selection needed - bet on "any"
+        elif self.bet_type == BetType.TRUNG_3SO_ANY:
+            return self._select_digit(probs)
 
         else:
             raise ValueError(f"Unknown bet type: {self.bet_type}")
@@ -777,12 +771,11 @@ class Bingo18Simulator:
                     scored.append((ev, bt, cat))
 
             elif bt == BetType.TRUNG_2SO:
-                if self.model.pair_clf is not None:
-                    p = self.model.predict_pair_proba(X)
-                else:
-                    p = self._estimate_pair_prob(probs)
-                ev = p * TRUNG_2SO_MULTIPLIER
-                scored.append((ev, bt, None))
+                for d in range(1, 7):
+                    p = probs.get(d, 0)
+                    p_pair = 3 * p * p * (1 - p) + p * p * p
+                    ev = p_pair * TRUNG_2SO_MULTIPLIER
+                    scored.append((ev, bt, d))
 
             elif bt == BetType.TRUNG_3SO:
                 for d in range(1, 7):
@@ -791,12 +784,10 @@ class Bingo18Simulator:
                     scored.append((ev, bt, d))
 
             elif bt == BetType.TRUNG_3SO_ANY:
-                if self.model.triple_clf is not None:
-                    p = self.model.predict_triple_proba(X)
-                else:
-                    p = sum(probs.get(d, 0) ** 3 for d in range(1, 7))
-                ev = p * TRUNG_3SO_ANY_MULTIPLIER
-                scored.append((ev, bt, None))
+                for d in range(1, 7):
+                    p = probs.get(d, 0) ** 3
+                    ev = p * TRUNG_3SO_ANY_MULTIPLIER
+                    scored.append((ev, bt, d))
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return scored

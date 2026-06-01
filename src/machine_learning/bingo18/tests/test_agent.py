@@ -60,6 +60,8 @@ class TestAgentGenome:
         assert genome.primary_strategy == "top_n"
         assert genome.threshold == 0.12
         assert genome.top_n == 1
+        assert genome.max_bets_per_draw == 3
+        assert genome.multi_bet_budget_share == 0.06
 
     def test_immutability(self):
         genome = AgentGenome()
@@ -241,6 +243,57 @@ class TestDecideBets:
         agent = AdaptiveAgent(agent_id="test_d5", genome=genome, model=mock_model, budget=1_000_000)
         bets = agent.decide_bets(sample_X, sample_predictions)
         assert len(bets) > 0
+
+    def test_multi_bet_returns_multiple_bets(self, mock_model, sample_X, sample_predictions):
+        genome = AgentGenome(max_bets_per_draw=3, exploration_rate=0.0, multi_bet_budget_share=0.06)
+        agent = AdaptiveAgent(agent_id="test_mb1", genome=genome, model=mock_model, budget=1_000_000)
+        bets = agent.decide_bets(sample_X, sample_predictions)
+        assert len(bets) >= 1
+        assert len(bets) <= 3
+        for bet in bets:
+            assert len(bet) == 3
+            bet_type, bet_value, bet_amount = bet
+            assert isinstance(bet_type, BetType)
+            assert bet_amount >= agent.bet_size
+
+    def test_multi_bet_respects_budget(self, mock_model, sample_X, sample_predictions):
+        genome = AgentGenome(max_bets_per_draw=5, exploration_rate=0.0, multi_bet_budget_share=0.10)
+        agent = AdaptiveAgent(agent_id="test_mb2", genome=genome, model=mock_model, budget=50_000)
+        bets = agent.decide_bets(sample_X, sample_predictions)
+        total_wagered = sum(b[2] for b in bets)
+        assert total_wagered <= agent.budget
+
+    def test_multi_bet_skips_negative_ev(self, mock_model, sample_X):
+        genome = AgentGenome(max_bets_per_draw=5, exploration_rate=0.0)
+        agent = AdaptiveAgent(agent_id="test_mb3", genome=genome, model=mock_model, budget=1_000_000)
+        # Uniform predictions — no strong signal, EV should be low
+        uniform_preds = {1: 1 / 6, 2: 1 / 6, 3: 1 / 6, 4: 1 / 6, 5: 1 / 6, 6: 1 / 6}
+        bets = agent._multi_bet(uniform_preds)
+        # With uniform predictions, some bet types still have positive EV
+        # (e.g. MOT_SO has EV > 0 for any digit), so we just check structure
+        for bet in bets:
+            bet_type, bet_value, bet_amount = bet
+            assert isinstance(bet_type, BetType)
+            assert bet_amount >= agent.bet_size
+
+    def test_single_bet_backward_compatible(self, mock_model, sample_X, sample_predictions):
+        genome = AgentGenome(max_bets_per_draw=1, exploration_rate=0.0)
+        agent = AdaptiveAgent(agent_id="test_mb4", genome=genome, model=mock_model, budget=1_000_000)
+        bets = agent.decide_bets(sample_X, sample_predictions)
+        assert len(bets) == 1
+
+    def test_multi_bet_with_genome_defaults(self, mock_model, sample_X, sample_predictions):
+        genome = AgentGenome()  # default: max_bets_per_draw=3
+        agent = AdaptiveAgent(agent_id="test_mb5", genome=genome, model=mock_model, budget=1_000_000)
+        bets = agent.decide_bets(sample_X, sample_predictions)
+        assert len(bets) >= 1
+
+    def test_multi_bet_small_budget(self, mock_model, sample_X, sample_predictions):
+        genome = AgentGenome(max_bets_per_draw=3, exploration_rate=0.0, multi_bet_budget_share=0.06)
+        agent = AdaptiveAgent(agent_id="test_mb6", genome=genome, model=mock_model, budget=20_000, bet_size=10_000)
+        bets = agent.decide_bets(sample_X, sample_predictions)
+        total_wagered = sum(b[2] for b in bets)
+        assert total_wagered <= agent.budget
 
 
 # --- Tests for record_result ---

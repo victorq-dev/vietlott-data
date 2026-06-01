@@ -15,6 +15,15 @@ from loguru import logger
 
 from machine_learning.bingo18.model import Bingo18Model
 from machine_learning.bingo18.simulator import (
+    CONG_TONG_MULTIPLIER,
+    CONG_TONG_PRIZE,
+    HAI_SO_TRUNG_PRIZE,
+    LON_HOA_NHO_PRIZE,
+    LON_HOA_NHO_V2_MULTIPLIER,
+    MOT_SO_PRIZE,
+    TRUNG_2SO_MULTIPLIER,
+    TRUNG_3SO_ANY_MULTIPLIER,
+    TRUNG_3SO_MULTIPLIER,
     BetRecord,
     BetType,
     SimulationResult,
@@ -68,6 +77,8 @@ class AgentGenome:
     primary_strategy: str = "top_n"
     threshold: float = 0.12
     top_n: int = 1
+    max_bets_per_draw: int = 3
+    multi_bet_budget_share: float = 0.06
 
 
 class BetTypeStats:
@@ -229,7 +240,11 @@ class AdaptiveAgent:
         if self._rng.random() < self.genome.exploration_rate:
             return self._random_bet(bet_amount, predictions)
 
-        # Weighted selection of bet type
+        # Multi-bet mode: EV-driven selection of multiple bet types
+        if self.genome.max_bets_per_draw > 1:
+            return self._multi_bet(predictions)
+
+        # Single-bet mode: weighted random selection
         return self._weighted_bet(bet_amount, predictions)
 
     def _weighted_bet(self, bet_amount: int, predictions: dict[int, float]) -> list[tuple[BetType, Any, int]]:
@@ -263,9 +278,151 @@ class AdaptiveAgent:
         bet_value = self._select_bet_value(chosen_type, predictions)
         return [(chosen_type, bet_value, bet_amount)]
 
+    def _score_bets_for_agent(self, predictions: dict[int, float]) -> list[tuple[float, BetType, Any]]:
+        """Score all bet type + value combinations by expected value.
+
+        Adapted from Bingo18Simulator._score_bets() for agent use.
+        Returns list of (ev, BetType, bet_value) sorted descending.
+        """
+        scored: list[tuple[float, BetType, Any]] = []
+
+        for bt in BetType:
+            if bt in (BetType.MOT_SO, BetType.HAI_SO_TRUNG, BetType.BA_SO_TRUNG):
+                for d, p in predictions.items():
+                    ev = self._ev_digit(bt, d, p)
+                    scored.append((ev, bt, d))
+
+            elif bt == BetType.CONG_TONG:
+                for t in range(3, 19):
+                    p = self._estimate_total_prob(predictions, t)
+                    ev = p * CONG_TONG_PRIZE.get(t, 0) / 10_000
+                    scored.append((ev, bt, t))
+
+            elif bt == BetType.CONG_TONG_MULT:
+                for t in range(3, 19):
+                    p = self._estimate_total_prob(predictions, t)
+                    ev = p * CONG_TONG_MULTIPLIER.get(t, 0)
+                    scored.append((ev, bt, t))
+
+            elif bt == BetType.LON_HOA_NHO:
+                cat_probs = self._estimate_category_probs(predictions)
+                for cat, p in cat_probs.items():
+                    ev = p * LON_HOA_NHO_PRIZE.get(cat, 0) / 10_000
+                    scored.append((ev, bt, cat))
+
+            elif bt == BetType.LON_HOA_NHO_V2:
+                cat_probs = self._estimate_category_probs(predictions)
+                for cat, p in cat_probs.items():
+                    ev = p * LON_HOA_NHO_V2_MULTIPLIER.get(cat, 0)
+                    scored.append((ev, bt, cat))
+
+            elif bt == BetType.TRUNG_2SO:
+                for d in range(1, 7):
+                    p = predictions.get(d, 0)
+                    p_pair = 3 * p * p * (1 - p) + p * p * p
+                    ev = p_pair * TRUNG_2SO_MULTIPLIER
+                    scored.append((ev, bt, d))
+
+            elif bt == BetType.TRUNG_3SO:
+                for d in range(1, 7):
+                    p = predictions.get(d, 0) ** 3
+                    ev = p * TRUNG_3SO_MULTIPLIER
+                    scored.append((ev, bt, d))
+
+            elif bt == BetType.TRUNG_3SO_ANY:
+                for d in range(1, 7):
+                    p = predictions.get(d, 0) ** 3
+                    ev = p * TRUNG_3SO_ANY_MULTIPLIER
+                    scored.append((ev, bt, d))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored
+
+    @staticmethod
+    def _ev_digit(bt: BetType, _digit: int, p: float) -> float:
+        """Estimate expected value for digit-based bets."""
+        if bt == BetType.MOT_SO:
+            return p * MOT_SO_PRIZE.get(1, 0) / 10_000
+        elif bt == BetType.HAI_SO_TRUNG:
+            p_at_least_2 = 3 * p * p * (1 - p) + p * p * p
+            return p_at_least_2 * HAI_SO_TRUNG_PRIZE / 10_000
+        elif bt == BetType.BA_SO_TRUNG:
+            return p**3 * 1_200_000 / 10_000
+        return 0.0
+
+    @staticmethod
+    def _estimate_total_prob(probs: dict[int, float], total: int) -> float:
+        """Estimate probability of a specific total from digit probs."""
+        if total <= 9:
+            low = np.mean([probs.get(d, 0) for d in [1, 2, 3]])
+            return low * (1 + abs(total - 10.5) * 0.05)
+        elif total <= 11:
+            return np.mean(list(probs.values()))
+        else:
+            high = np.mean([probs.get(d, 0) for d in [4, 5, 6]])
+            return high * (1 + abs(total - 10.5) * 0.05)
+
+    @staticmethod
+    def _estimate_category_probs(probs: dict[int, float]) -> dict[str, float]:
+        """Estimate category probabilities from digit probs."""
+        low_prob = np.mean([probs.get(d, 0) for d in [1, 2, 3]])
+        high_prob = np.mean([probs.get(d, 0) for d in [4, 5, 6]])
+        total_weight = low_prob + high_prob
+        if total_weight > 0:
+            p_small = low_prob / total_weight * 0.75
+            p_big = high_prob / total_weight * 0.75
+        else:
+            p_small, p_big = 0.375, 0.375
+        p_draw = 1.0 - p_small - p_big
+        return {"Nhỏ": p_small, "Hòa": p_draw, "Lớn": p_big}
+
+    def _multi_bet(self, predictions: dict[int, float]) -> list[tuple[BetType, Any, int]]:
+        """Select multiple bets using EV scoring with weight adjustment.
+
+        Scores all bet types by EV, applies weight multiplier from adaptation,
+        selects top-N positive-EV bets, and allocates budget proportionally.
+        """
+        scored = self._score_bets_for_agent(predictions)
+        if not scored:
+            return []
+
+        # Apply weight multiplier from adaptation system
+        weighted_scored = []
+        for ev, bt, bv in scored:
+            weight = self._bet_type_weights.get(bt.value, 1.0)
+            weighted_ev = ev * weight
+            weighted_scored.append((weighted_ev, bt, bv))
+
+        # Select top-N positive-EV bets
+        max_bets = self.genome.max_bets_per_draw
+        selected = [(ev, bt, bv) for ev, bt, bv in weighted_scored if ev > 0][:max_bets]
+
+        if not selected:
+            return []
+
+        # Calculate per-bet amount
+        total_budget_share = min(
+            int(self.budget * self.genome.multi_bet_budget_share),
+            self.budget,
+        )
+        per_bet = max(total_budget_share // len(selected), self.bet_size)
+        per_bet = min(per_bet, self.budget)
+
+        if per_bet < self.bet_size:
+            return []
+
+        # Ensure total doesn't exceed budget
+        total_needed = per_bet * len(selected)
+        if total_needed > self.budget:
+            per_bet = self.budget // len(selected)
+            if per_bet < self.bet_size:
+                return []
+
+        return [(bt, bv, per_bet) for _, bt, bv in selected]
+
     def _select_bet_value(self, bet_type: BetType, predictions: dict[int, float]) -> Any:
         """Select the best bet value for a given bet type using predictions."""
-        if bet_type in (BetType.MOT_SO, BetType.HAI_SO_TRUNG, BetType.BA_SO_TRUNG, BetType.TRUNG_3SO):
+        if bet_type in (BetType.MOT_SO, BetType.HAI_SO_TRUNG, BetType.BA_SO_TRUNG, BetType.TRUNG_3SO, BetType.TRUNG_2SO, BetType.TRUNG_3SO_ANY):
             # Pick the digit with highest probability
             if predictions:
                 return max(predictions, key=lambda d: predictions[d])
@@ -291,12 +448,6 @@ class AdaptiveAgent:
                     return "Lớn"
                 return "Hòa"
             return "Lớn"  # Default
-
-        elif bet_type == BetType.TRUNG_2SO:
-            return None  # No selection needed
-
-        elif bet_type == BetType.TRUNG_3SO_ANY:
-            return None  # No selection needed
 
         return None
 
@@ -442,7 +593,12 @@ class AdaptiveAgent:
 
         self._adaptation_log.append(log_entry)
         if log_entry["changes"]:
-            logger.debug(f"Agent {self.agent_id} adapted (gen {self._generation}): {len(log_entry['changes'])} changes")
+            changes_summary = "; ".join(log_entry["changes"][:5])
+            extra = f" +{len(log_entry['changes']) - 5} more" if len(log_entry["changes"]) > 5 else ""
+            logger.debug(
+                f"[{self.agent_id}] Adapted (gen {self._generation}): {changes_summary}{extra} | "
+                f"fraction={self._base_bet_fraction:.3f} budget={self.budget:,}"
+            )
 
         return True
 
@@ -542,6 +698,8 @@ def create_diverse_agents(
     exploration_rates = [0.05, 0.10, 0.15, 0.20]
     adaptation_rates = [0.2, 0.3, 0.4]
     base_bet_fractions = [0.01, 0.02, 0.03, 0.05]
+    max_bets_options = [1, 2, 3, 5]
+    budget_shares = [0.03, 0.06, 0.10]
 
     agents: list[AdaptiveAgent] = []
     rng = np.random.default_rng(42)
@@ -553,6 +711,8 @@ def create_diverse_agents(
         exploration = float(rng.choice(exploration_rates))
         adaptation = float(rng.choice(adaptation_rates))
         bet_fraction = float(rng.choice(base_bet_fractions))
+        max_bets = int(rng.choice(max_bets_options))
+        budget_share = float(rng.choice(budget_shares))
 
         genome = AgentGenome(
             algorithm=algo,
@@ -564,6 +724,8 @@ def create_diverse_agents(
             adaptation_rate=adaptation,
             exploration_rate=exploration,
             primary_strategy=strategy,
+            max_bets_per_draw=max_bets,
+            multi_bet_budget_share=budget_share,
         )
 
         agent = AdaptiveAgent(
