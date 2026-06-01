@@ -1,5 +1,7 @@
 """Feature engineering for Bingo18 lottery prediction."""
 
+from collections import Counter
+
 import numpy as np
 import pandas as pd
 from loguru import logger
@@ -143,6 +145,24 @@ class Bingo18FeatureEngineer:
         features.append(streak_big)
         features.append(streak_small)
 
+        # 8. Pair/Triple statistics in window
+        pair_count = 0
+        triple_count = 0
+        for draw in window_results:
+            counts = Counter(draw)
+            max_same = max(counts.values()) if counts else 0
+            if max_same >= 2:
+                pair_count += 1
+            if max_same >= 3:
+                triple_count += 1
+        features.append(pair_count / w)
+        features.append(triple_count / w)
+
+        # 9. Max same digits in last draw
+        last = window_results[-1]
+        last_counts = Counter(last)
+        features.append(max(last_counts.values()) if last_counts else 0)
+
         return np.array(features, dtype=np.float32)
 
     def _feature_names(self) -> list[str]:
@@ -155,4 +175,5 @@ class Bingo18FeatureEngineer:
         names.extend(["odd_ratio", "even_ratio"])
         names.append("big_ratio")
         names.extend(["streak_big", "streak_small"])
+        names.extend(["pair_ratio", "triple_ratio", "max_same_last"])
         return names

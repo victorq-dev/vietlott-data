@@ -250,3 +250,139 @@ def test_max_drawdown_non_negative(trained_model, sample_df):
     result = sim.run(sample_df)
 
     assert result.max_drawdown >= 0
+
+
+# --- Tests for new multiplier-based bet types ---
+
+
+def test_cong_tong_mult_hit():
+    """Multiplier-based total bet: 10k bet on total 3 should pay 10k * 120 = 1.2M."""
+    matches, payout = calculate_payout(BetType.CONG_TONG_MULT, 3, [1, 1, 1], 10_000)
+    assert matches == 1
+    assert payout == 1_200_000
+
+
+def test_cong_tong_mult_miss():
+    matches, payout = calculate_payout(BetType.CONG_TONG_MULT, 3, [1, 2, 3], 10_000)
+    assert matches == 0
+    assert payout == 0
+
+
+def test_cong_tong_mult_middle():
+    """Total 10 with 10k bet = 10k * 4.4 = 44k."""
+    matches, payout = calculate_payout(BetType.CONG_TONG_MULT, 10, [3, 3, 4], 10_000)
+    assert matches == 1
+    assert payout == 44_000
+
+
+def test_lon_hoa_nho_v2_nho():
+    """Nhỏ (3-9) with multiplier 1.5: 10k * 1.5 = 15k."""
+    matches, payout = calculate_payout(BetType.LON_HOA_NHO_V2, "Nhỏ", [1, 2, 3], 10_000)
+    assert matches == 1
+    assert payout == 15_000
+
+
+def test_lon_hoa_nho_v2_hoa():
+    """Hòa (10-11) with multiplier 2.0: 10k * 2.0 = 20k."""
+    matches, payout = calculate_payout(BetType.LON_HOA_NHO_V2, "Hòa", [3, 3, 4], 10_000)
+    assert matches == 1
+    assert payout == 20_000
+
+
+def test_lon_hoa_nho_v2_lon():
+    """Lớn (12-18) with multiplier 1.5: 10k * 1.5 = 15k."""
+    matches, payout = calculate_payout(BetType.LON_HOA_NHO_V2, "Lớn", [4, 4, 5], 10_000)
+    assert matches == 1
+    assert payout == 15_000
+
+
+def test_trung_2so_hit():
+    """Any pair: 10k * 7.5 = 75k."""
+    matches, payout = calculate_payout(BetType.TRUNG_2SO, None, [3, 3, 5], 10_000)
+    assert matches >= 2
+    assert payout == 75_000
+
+
+def test_trung_2so_miss():
+    matches, payout = calculate_payout(BetType.TRUNG_2SO, None, [1, 2, 3], 10_000)
+    assert matches == 0
+    assert payout == 0
+
+
+def test_trung_3so_specific_hit():
+    """Specific triple: bet on 5, draw [5,5,5] = 10k * 120 = 1.2M."""
+    matches, payout = calculate_payout(BetType.TRUNG_3SO, 5, [5, 5, 5], 10_000)
+    assert matches == 3
+    assert payout == 1_200_000
+
+
+def test_trung_3so_specific_miss():
+    matches, payout = calculate_payout(BetType.TRUNG_3SO, 5, [5, 5, 3], 10_000)
+    assert matches == 2
+    assert payout == 0
+
+
+def test_trung_3so_any_hit():
+    """Any triple: 10k * 20 = 200k."""
+    matches, payout = calculate_payout(BetType.TRUNG_3SO_ANY, None, [4, 4, 4], 10_000)
+    assert matches == 3
+    assert payout == 200_000
+
+
+def test_trung_3so_any_miss():
+    matches, payout = calculate_payout(BetType.TRUNG_3SO_ANY, None, [1, 2, 3], 10_000)
+    assert matches == 0
+    assert payout == 0
+
+
+# --- Tests for combined simulation ---
+
+
+def test_combined_simulation_runs(trained_model, sample_df):
+    sim = Bingo18Simulator(model=trained_model, budget=5_000_000, bet_size=10_000)
+    result = sim.run_combined(
+        sample_df,
+        bet_types=["mot_so", "cong_tong_mult", "lon_hoa_nho_v2"],
+        mode="combine",
+    )
+    assert result.total_bets > 0
+    assert result.starting_budget == 5_000_000
+
+
+def test_all_in_simulation_runs(trained_model, sample_df):
+    sim = Bingo18Simulator(model=trained_model, budget=5_000_000, bet_size=10_000)
+    result = sim.run_combined(
+        sample_df,
+        bet_types=["mot_so", "cong_tong_mult"],
+        mode="all_in",
+    )
+    assert result.total_bets > 0
+
+
+def test_skip_simulation_skips_low_confidence(trained_model, sample_df):
+    sim = Bingo18Simulator(model=trained_model, budget=5_000_000, bet_size=10_000)
+    result_high = sim.run_combined(
+        sample_df,
+        bet_types=["mot_so"],
+        mode="skip",
+        confidence_threshold=0.0,
+    )
+    result_low = sim.run_combined(
+        sample_df,
+        bet_types=["mot_so"],
+        mode="skip",
+        confidence_threshold=0.99,
+    )
+    # Higher threshold should result in fewer bets
+    assert result_low.total_bets <= result_high.total_bets
+
+
+def test_combined_with_new_bet_types(trained_model, sample_df):
+    sim = Bingo18Simulator(model=trained_model, budget=10_000_000, bet_size=10_000)
+    result = sim.run_combined(
+        sample_df,
+        bet_types=["cong_tong_mult", "lon_hoa_nho_v2", "trung_2so", "trung_3so_any"],
+        mode="combine",
+    )
+    assert result.total_bets > 0
+    assert result.bet_type == "cong_tong_mult+lon_hoa_nho_v2+trung_2so+trung_3so_any"
