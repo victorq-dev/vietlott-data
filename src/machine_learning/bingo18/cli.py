@@ -1,5 +1,6 @@
 """CLI for Bingo18 ML training and simulation."""
 
+import sys
 from pathlib import Path
 
 import click
@@ -30,6 +31,8 @@ def load_data(data_path: Path) -> pd.DataFrame:
 @click.group()
 def cli():
     """Bingo18 ML training, simulation, and racing tools."""
+    logger.remove()
+    logger.add(sys.stderr, format="<level>{level: <8}</level> | {message}", level="INFO")
 
 
 @cli.command()
@@ -507,3 +510,7 @@ def _format_report_text(result, top_k: int) -> str:
         )
 
     return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    cli()
