@@ -285,6 +285,7 @@ class AdaptiveAgent:
         Returns list of (ev, BetType, bet_value) sorted descending.
         """
         scored: list[tuple[float, BetType, Any]] = []
+        cat_probs_cache: dict[str, float] | None = None
 
         for bt in BetType:
             if bt in (BetType.MOT_SO, BetType.HAI_SO_TRUNG, BetType.BA_SO_TRUNG):
@@ -305,14 +306,16 @@ class AdaptiveAgent:
                     scored.append((ev, bt, t))
 
             elif bt == BetType.LON_HOA_NHO:
-                cat_probs = self._estimate_category_probs(predictions)
-                for cat, p in cat_probs.items():
+                if cat_probs_cache is None:
+                    cat_probs_cache = self._estimate_category_probs(predictions)
+                for cat, p in cat_probs_cache.items():
                     ev = p * LON_HOA_NHO_PRIZE.get(cat, 0) / 10_000
                     scored.append((ev, bt, cat))
 
             elif bt == BetType.LON_HOA_NHO_V2:
-                cat_probs = self._estimate_category_probs(predictions)
-                for cat, p in cat_probs.items():
+                if cat_probs_cache is None:
+                    cat_probs_cache = self._estimate_category_probs(predictions)
+                for cat, p in cat_probs_cache.items():
                     ev = p * LON_HOA_NHO_V2_MULTIPLIER.get(cat, 0)
                     scored.append((ev, bt, cat))
 
@@ -352,7 +355,12 @@ class AdaptiveAgent:
 
     @staticmethod
     def _estimate_total_prob(probs: dict[int, float], total: int) -> float:
-        """Estimate probability of a specific total from digit probs."""
+        """Rough heuristic for sum probability from digit probabilities.
+
+        Note: This is an approximation, not exact dice math. Used for fast
+        EV scoring in agent decision-making. The simulator uses proper
+        combinatorial calculation for actual payouts.
+        """
         if total <= 9:
             low = np.mean([probs.get(d, 0) for d in [1, 2, 3]])
             return low * (1 + abs(total - 10.5) * 0.05)
@@ -364,7 +372,11 @@ class AdaptiveAgent:
 
     @staticmethod
     def _estimate_category_probs(probs: dict[int, float]) -> dict[str, float]:
-        """Estimate category probabilities from digit probs."""
+        """Rough heuristic for Nho/Hoa/Lon probabilities from digit probabilities.
+
+        Note: This is an approximation. Splits probability mass between Nho (sum 3-9)
+        and Lon (sum 12-18) proportional to low/high digit probs, with Hoa as remainder.
+        """
         low_prob = np.mean([probs.get(d, 0) for d in [1, 2, 3]])
         high_prob = np.mean([probs.get(d, 0) for d in [4, 5, 6]])
         total_weight = low_prob + high_prob
@@ -373,7 +385,7 @@ class AdaptiveAgent:
             p_big = high_prob / total_weight * 0.75
         else:
             p_small, p_big = 0.375, 0.375
-        p_draw = 1.0 - p_small - p_big
+        p_draw = max(0.0, 1.0 - p_small - p_big)
         return {"Nhỏ": p_small, "Hòa": p_draw, "Lớn": p_big}
 
     def _multi_bet(self, predictions: dict[int, float]) -> list[tuple[BetType, Any, int]]:
@@ -422,7 +434,11 @@ class AdaptiveAgent:
 
     def _select_bet_value(self, bet_type: BetType, predictions: dict[int, float]) -> Any:
         """Select the best bet value for a given bet type using predictions."""
-        if bet_type in (BetType.MOT_SO, BetType.HAI_SO_TRUNG, BetType.BA_SO_TRUNG, BetType.TRUNG_3SO, BetType.TRUNG_2SO, BetType.TRUNG_3SO_ANY):
+        digit_types = (
+            BetType.MOT_SO, BetType.HAI_SO_TRUNG, BetType.BA_SO_TRUNG,
+            BetType.TRUNG_3SO, BetType.TRUNG_2SO, BetType.TRUNG_3SO_ANY,
+        )
+        if bet_type in digit_types:
             # Pick the digit with highest probability
             if predictions:
                 return max(predictions, key=lambda d: predictions[d])
