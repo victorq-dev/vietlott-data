@@ -486,10 +486,7 @@ def _generate_visualizations(result, output_dir: Path) -> None:
     # Export per-agent bet decisions to CSV
     from machine_learning.bingo18.visualize import export_agent_decisions_csv
 
-    agent_csv_dicts = [
-        {"agent_id": ar.agent_id, "bet_history": ar.bet_history}
-        for ar in result.agent_results
-    ]
+    agent_csv_dicts = [{"agent_id": ar.agent_id, "bet_history": ar.bet_history} for ar in result.agent_results]
     export_agent_decisions_csv(agent_csv_dicts, output_dir)
 
     generate_race_report(
@@ -719,7 +716,12 @@ def race_with_strategy(budget: int, bet_size: int, n_agents: int, data_path: str
 @click.option("--n-agents", type=int, default=5, help="Number of parallel training agents")
 @click.option("--epochs", type=int, default=10, help="Training epochs per agent")
 @click.option("--budget", type=int, default=500_000, help="Starting budget per agent")
-@click.option("--output", type=click.Path(), default="models/bingo18/parallel", help="Output directory for parallel training models")
+@click.option(
+    "--output",
+    type=click.Path(),
+    default="models/bingo18/parallel",
+    help="Output directory for parallel training models",
+)
 @click.option("--data-path", type=click.Path(exists=True), default=None, help="Path to bingo18.jsonl")
 def train_parallel(n_agents: int, epochs: int, budget: int, output: str, data_path: str | None):
     """Train multiple strategy models in parallel and select the best.
@@ -750,8 +752,8 @@ def train_parallel(n_agents: int, epochs: int, budget: int, output: str, data_pa
     # Create configs
     configs = create_default_configs()[:n_agents]
     for config in configs:
-        object.__setattr__(config, 'n_epochs', epochs)
-        object.__setattr__(config, 'budget', budget)
+        object.__setattr__(config, "n_epochs", epochs)
+        object.__setattr__(config, "budget", budget)
 
     # Run parallel training
     result = run_parallel_training(
@@ -766,7 +768,7 @@ def train_parallel(n_agents: int, epochs: int, budget: int, output: str, data_pa
     click.echo("  PARALLEL TRAINING RESULTS")
     click.echo(f"{'=' * 80}")
     click.echo(f"  {'Agent':<30} {'ROI':>10} {'WinRate':>10} {'Budget':>15} {'Bets':>8} {'Time':>8}")
-    click.echo(f"  {'-'*30} {'-'*10} {'-'*10} {'-'*15} {'-'*8} {'-'*8}")
+    click.echo(f"  {'-' * 30} {'-' * 10} {'-' * 10} {'-' * 15} {'-' * 8} {'-' * 8}")
 
     for r in sorted(result.all_results, key=lambda x: x.test_roi, reverse=True):
         click.echo(
@@ -786,10 +788,14 @@ def train_parallel(n_agents: int, epochs: int, budget: int, output: str, data_pa
 @click.option("--budget", type=int, default=500_000, help="Starting budget per agent")
 @click.option("--bet-size", type=int, default=10_000, help="Base bet size")
 @click.option("--adapt-interval", type=int, default=50, help="Draws between adaptation cycles")
-@click.option("--agent-dir", type=click.Path(), default="models/bingo18/agents", help="Directory to save/load agent state")
+@click.option(
+    "--agent-dir", type=click.Path(), default="models/bingo18/agents", help="Directory to save/load agent state"
+)
 @click.option("--data-path", type=click.Path(exists=True), default=None, help="Path to bingo18.jsonl")
 @click.option("--fresh", is_flag=True, help="Ignore existing agent state, start fresh")
-@click.option("--log-file", type=click.Path(), default=None, help="Write logs to file (default: logs/bingo18_YYYYMMDD_HHMMSS.log)")
+@click.option(
+    "--log-file", type=click.Path(), default=None, help="Write logs to file (default: logs/bingo18_YYYYMMDD_HHMMSS.log)"
+)
 def train_live(
     n_agents: int,
     rounds: int,
@@ -821,12 +827,15 @@ def train_live(
         vietlott-bingo18 train-live --fresh --rounds 5
     """
     import time as _time
+
     from machine_learning.bingo18.continuous_trainer import run_continuous_training
 
     # Set up file logging
     log_path = Path(log_file) if log_file else Path("logs") / f"bingo18_{_time.strftime('%Y%m%d_%H%M%S')}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_id = logger.add(log_path, format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}", level="INFO", encoding="utf-8")
+    log_id = logger.add(
+        log_path, format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}", level="INFO", encoding="utf-8"
+    )
     logger.info(f"Logging to {log_path}")
     click.echo(f"  Log file: {log_path}")
 
@@ -883,7 +892,9 @@ def train_live(
 
 
 @cli.command()
-@click.option("--agent-dir", type=click.Path(), default="models/bingo18/agents", help="Directory with saved agent state")
+@click.option(
+    "--agent-dir", type=click.Path(), default="models/bingo18/agents", help="Directory with saved agent state"
+)
 @click.option("--top-bets", type=int, default=3, help="Number of top bet types to show per agent (default: 3)")
 @click.option("--detail", is_flag=True, help="Show full bet type breakdown per agent")
 def stats(agent_dir: str, top_bets: int, detail: bool):
@@ -951,18 +962,20 @@ def stats(agent_dir: str, top_bets: int, detail: bool):
 
         bet_perf.sort(key=lambda x: x[1], reverse=True)
 
-        rows.append({
-            "agent_id": d.get("agent_id", "?"),
-            "genome": d.get("genome", {}),
-            "budget": budget,
-            "starting_budget": starting,
-            "roi": roi,
-            "win_rate": win_rate,
-            "total_bets": total_bets,
-            "generation": generation,
-            "bet_perf": bet_perf,
-            "bet_weights": s.get("bet_type_weights", {}),
-        })
+        rows.append(
+            {
+                "agent_id": d.get("agent_id", "?"),
+                "genome": d.get("genome", {}),
+                "budget": budget,
+                "starting_budget": starting,
+                "roi": roi,
+                "win_rate": win_rate,
+                "total_bets": total_bets,
+                "generation": generation,
+                "bet_perf": bet_perf,
+                "bet_weights": s.get("bet_type_weights", {}),
+            }
+        )
 
     rows.sort(key=lambda r: r["roi"], reverse=True)
 
@@ -984,7 +997,7 @@ def stats(agent_dir: str, top_bets: int, detail: bool):
         click.echo(
             f"  {r['agent_id']:<15} {r['generation']:>5} {r['budget']:>12,} "
             f"{roi_str:>8} {r['win_rate']:>7.1%} {r['total_bets']:>7,} "
-            f"{g.get('risk_profile','?'):>12} {g.get('primary_strategy','?'):>10}  {top_str}"
+            f"{g.get('risk_profile', '?'):>12} {g.get('primary_strategy', '?'):>10}  {top_str}"
         )
 
     click.echo(f"{'=' * 100}")
@@ -994,20 +1007,15 @@ def stats(agent_dir: str, top_bets: int, detail: bool):
     alive = sum(1 for r in rows if r["budget"] >= 10_000)
     avg_roi = sum(r["roi"] for r in rows) / len(rows)
     best = rows[0]
-    click.echo(f"\n  Summary: {alive}/{len(rows)} alive | avg ROI {avg_roi:+.1f}% | "
-               f"total bets {total_bets_all:,} | best: {best['agent_id']} ({best['roi']:+.1f}%)")
+    click.echo(
+        f"\n  Summary: {alive}/{len(rows)} alive | avg ROI {avg_roi:+.1f}% | "
+        f"total bets {total_bets_all:,} | best: {best['agent_id']} ({best['roi']:+.1f}%)"
+    )
 
     # --- Aggregate bet type performance ---
     click.echo(f"\n  BET TYPE PERFORMANCE (aggregate across all agents)")
     click.echo(f"  {'-' * 60}")
     agg: dict[str, dict] = {}
-    for r in rows:
-        for bt_name, bt_roi, bt_wr, bets in r["bet_perf"]:
-            if bt_name not in agg:
-                agg[bt_name] = {"wagered": 0, "payout": 0, "bets": 0, "wins": 0}
-            s_data = rows[0]  # get raw values from original data
-    # Re-aggregate from raw data
-    agg = {}
     for d in agents_data:
         for bt_name, bs in d.get("state", {}).get("bet_type_stats", {}).items():
             if bt_name not in agg:
@@ -1034,8 +1042,10 @@ def stats(agent_dir: str, top_bets: int, detail: bool):
     # --- Detail per agent ---
     if detail:
         for r in rows:
-            click.echo(f"\n  [{r['agent_id']}]  gen={r['generation']}  ROI={r['roi']:+.1f}%  "
-                       f"budget={r['budget']:,}  bets={r['total_bets']:,}")
+            click.echo(
+                f"\n  [{r['agent_id']}]  gen={r['generation']}  ROI={r['roi']:+.1f}%  "
+                f"budget={r['budget']:,}  bets={r['total_bets']:,}"
+            )
             click.echo(f"    {'Bet Type':<20} {'Weight':>7} {'ROI':>8} {'WinRate':>8} {'Bets':>8}")
             weights = r["bet_weights"]
             for bt_name, bt_roi, bt_wr, bets in r["bet_perf"]:
@@ -1045,8 +1055,12 @@ def stats(agent_dir: str, top_bets: int, detail: bool):
 
 
 @cli.command()
-@click.option("--agent-dir", type=click.Path(), default="models/bingo18/agents", help="Directory with saved agent states")
-@click.option("--data-path", type=click.Path(exists=True), default=None, help="New data to evaluate on (default: bingo18.jsonl)")
+@click.option(
+    "--agent-dir", type=click.Path(), default="models/bingo18/agents", help="Directory with saved agent states"
+)
+@click.option(
+    "--data-path", type=click.Path(exists=True), default=None, help="New data to evaluate on (default: bingo18.jsonl)"
+)
 @click.option("--top-n", type=int, default=3, help="Evaluate top N agents by saved ROI (default: 3, 0 = all)")
 @click.option("--agent", type=str, default=None, help="Evaluate a specific agent by ID (e.g. agent_000)")
 def eval(agent_dir: str, data_path: str | None, top_n: int, agent: str | None):
@@ -1111,7 +1125,7 @@ def eval(agent_dir: str, data_path: str | None, top_n: int, agent: str | None):
             except Exception:
                 pass
         scored.sort(reverse=True)
-        files = [f for _, f in scored[:top_n if top_n > 0 else len(scored)]]
+        files = [f for _, f in scored[: top_n if top_n > 0 else len(scored)]]
 
     # Prepare data
     results_list = df["result"].tolist()
@@ -1138,7 +1152,25 @@ def eval(agent_dir: str, data_path: str | None, top_n: int, agent: str | None):
         window = ag.genome.window
         feature_engineer = Bingo18FeatureEngineer(window=window)
         start_budget = ag._starting_budget
-        ag.budget = start_budget  # reset budget for clean eval
+
+        # Reset all mutable state so eval results are clean (not polluted by training history)
+        ag.budget = start_budget
+        ag._wins = 0
+        ag._losses = 0
+        ag._total_bets = 0
+        ag._current_streak = 0
+        ag._profit_curve = [start_budget]
+        ag._max_budget = start_budget
+        ag._min_budget = start_budget
+        ag._max_drawdown = 0
+        ag._draws_since_adaptation = 0
+        for stats in ag._bet_type_stats.values():
+            stats.total_bets = 0
+            stats.wins = 0
+            stats.total_wagered = 0
+            stats.total_payout = 0
+            stats.recent_wins = []
+
         total_bets = 0
 
         for i in range(window, n_draws):
@@ -1174,16 +1206,18 @@ def eval(agent_dir: str, data_path: str | None, top_n: int, agent: str | None):
             # No increment_draw_counter, no maybe_adapt → weights frozen
 
         final_roi = (ag.budget - start_budget) / start_budget * 100 if start_budget > 0 else 0.0
-        all_results.append({
-            "agent_id": ag.agent_id,
-            "risk": ag.genome.risk_profile,
-            "start_budget": start_budget,
-            "final_budget": ag.budget,
-            "roi": final_roi,
-            "win_rate": ag.win_rate,
-            "total_bets": total_bets,
-            "bet_type_stats": ag._bet_type_stats,
-        })
+        all_results.append(
+            {
+                "agent_id": ag.agent_id,
+                "risk": ag.genome.risk_profile,
+                "start_budget": start_budget,
+                "final_budget": ag.budget,
+                "roi": final_roi,
+                "win_rate": ag.win_rate,
+                "total_bets": total_bets,
+                "bet_type_stats": ag._bet_type_stats,
+            }
+        )
 
     if not all_results:
         click.echo("  No results.")
@@ -1191,7 +1225,9 @@ def eval(agent_dir: str, data_path: str | None, top_n: int, agent: str | None):
 
     all_results.sort(key=lambda r: r["roi"], reverse=True)
 
-    click.echo(f"\n  {'Agent':<15} {'Risk':<13} {'Start Budget':>14} {'Final Budget':>14} {'ROI':>9} {'WinRate':>9} {'Bets':>7}")
+    click.echo(
+        f"\n  {'Agent':<15} {'Risk':<13} {'Start Budget':>14} {'Final Budget':>14} {'ROI':>9} {'WinRate':>9} {'Bets':>7}"
+    )
     click.echo(f"  {'-' * 85}")
     for r in all_results:
         roi_str = f"{r['roi']:>+8.1f}%"

@@ -374,6 +374,7 @@ def run_continuous_training(
     except KeyboardInterrupt:
         import os
         import signal
+
         # Block further Ctrl+C so the save loop can't be interrupted again
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         logger.warning("Interrupted! Saving all agent states before exit...")
@@ -387,11 +388,27 @@ def run_continuous_training(
                 logger.error(f"[{agent.agent_id}] Failed to save: {e}")
         logger.info("All states saved. Exiting.")
         os._exit(0)  # bypass thread cleanup to avoid second-Ctrl+C race
+    except Exception as e:
+        logger.error(f"Unexpected error during training: {e}")
+        for agent in agents:
+            try:
+                agent.save(state_dir)
+                logger.info(f"[{agent.agent_id}] State saved after error.")
+            except Exception as save_err:
+                logger.error(f"[{agent.agent_id}] Failed to save: {save_err}")
+        raise
 
     # Share knowledge and evolve population after all agents complete
     _share_knowledge(agents)
     _rng = np.random.default_rng()
     _evolve_population(agents, _rng)
+
+    # Persist evolved weights to disk
+    for agent in agents:
+        try:
+            agent.save(state_dir)
+        except Exception as e:
+            logger.error(f"[{agent.agent_id}] Failed to save evolved state: {e}")
 
     # Sort by composite_score
     results.sort(key=lambda r: r.composite_score, reverse=True)

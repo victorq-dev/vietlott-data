@@ -16,14 +16,10 @@ from loguru import logger
 
 from machine_learning.bingo18.model import Bingo18Model
 from machine_learning.bingo18.simulator import (
-
     CONG_TONG_PRIZE,
     HAI_SO_TRUNG_PRIZE,
     LON_HOA_NHO_PRIZE,
-
     MOT_SO_PRIZE,
-
-
     BetRecord,
     BetType,
     SimulationResult,
@@ -40,8 +36,6 @@ DEFAULT_BET_TYPE_WEIGHTS: dict[str, float] = {
     "ba_so_trung": 1.0,
     "cong_tong": 1.0,
     "lon_hoa_nho": 1.0,
-
-
 }
 
 # Weight clamp bounds
@@ -210,48 +204,6 @@ class AdaptiveAgent:
         """Maximum drawdown from peak budget."""
         return self._max_drawdown
 
-    def _has_acceptable_ev_bet(self, predictions: dict[int, float], threshold: float = -0.30) -> bool:
-        """Check if any bet type has EV above threshold.
-
-        For fair 3d6, all bets have ~43-50% house edge (-0.43 to -0.50 EV).
-        This gate skips draws where all bets are very negative EV, only
-        allowing bets when model predictions suggest lower house edge.
-
-        Parameters
-        ----------
-        predictions : dict[int, float]
-            Digit probabilities
-        threshold : float
-            Minimum acceptable EV per unit bet (default -0.30 = 30% house edge)
-
-        Returns
-        -------
-        bool : True if at least one bet type has EV > threshold
-        """
-        from machine_learning.bingo18.dice_probs import (
-            compute_mot_so_ev, compute_cong_tong_ev, compute_lon_hoa_nho_ev,
-        )
-
-        # Check MOT_SO (digit bets) - per 10k bet, normalize to per-unit
-        for d in range(1, 7):
-            ev = compute_mot_so_ev(predictions, d)
-            if ev / 10_000 > threshold:
-                return True
-
-        # Check CONG_TONG (sum bets)
-        for t in range(3, 19):
-            ev = compute_cong_tong_ev(predictions, t)
-            if ev / 10_000 > threshold:
-                return True
-
-        # Check LON_HOA_NHO (category bets)
-        for cat in ['Nhỏ', 'Hòa', 'Lớn']:
-            ev = compute_lon_hoa_nho_ev(predictions, cat)
-            if ev / 10_000 > threshold:
-                return True
-
-        return False
-
     def _best_ev_score(self, predictions: dict[int, float]) -> float:
         """Return the best (least negative) EV among all bet types.
 
@@ -259,7 +211,9 @@ class AdaptiveAgent:
         Returns EV per unit bet (e.g., -0.43 for MOT_SO with fair dice).
         """
         from machine_learning.bingo18.dice_probs import (
-            compute_mot_so_ev, compute_cong_tong_ev, compute_lon_hoa_nho_ev,
+            compute_cong_tong_ev,
+            compute_lon_hoa_nho_ev,
+            compute_mot_so_ev,
         )
 
         best_ev = -1.0
@@ -272,7 +226,7 @@ class AdaptiveAgent:
             ev = compute_cong_tong_ev(predictions, t) / 10_000
             best_ev = max(best_ev, ev)
 
-        for cat in ['Nhỏ', 'Hòa', 'Lớn']:
+        for cat in ["Nhỏ", "Hòa", "Lớn"]:
             ev = compute_lon_hoa_nho_ev(predictions, cat) / 10_000
             best_ev = max(best_ev, ev)
 
@@ -403,7 +357,6 @@ class AdaptiveAgent:
                     ev = p * LON_HOA_NHO_PRIZE.get(cat, 0) / 10_000 - 1.0
                     scored.append((ev, bt, cat))
 
-
         scored.sort(key=lambda x: x[0], reverse=True)
         return scored
 
@@ -413,15 +366,15 @@ class AdaptiveAgent:
         if bt == BetType.MOT_SO:
             # Exact EV: P(1)*12000 + P(2)*20000 + P(3)*30000 - 10000
             q = 1 - p
-            p1 = 3 * p * q ** 2
-            p2 = 3 * p ** 2 * q
-            p3 = p ** 3
+            p1 = 3 * p * q**2
+            p2 = 3 * p**2 * q
+            p3 = p**3
             return (p1 * 12_000 + p2 * 20_000 + p3 * 30_000) / 10_000 - 1.0
         elif bt == BetType.HAI_SO_TRUNG:
             p_at_least_2 = 3 * p * p * (1 - p) + p * p * p
-            return p_at_least_2 * HAI_SO_TRUNG_PRIZE / 10_000
+            return p_at_least_2 * HAI_SO_TRUNG_PRIZE / 10_000 - 1.0
         elif bt == BetType.BA_SO_TRUNG:
-            return p**3 * 1_200_000 / 10_000
+            return p**3 * 1_200_000 / 10_000 - 1.0
         return 0.0
 
     @staticmethod
@@ -495,9 +448,7 @@ class AdaptiveAgent:
         # Build context
         ctx_builder = self._strategy_model.context_builder
         budget_ratio = self.budget / self._starting_budget if self._starting_budget > 0 else 1.0
-        bet_type_rois = {
-            bt_name: stats.roi for bt_name, stats in self._bet_type_stats.items()
-        }
+        bet_type_rois = {bt_name: stats.roi for bt_name, stats in self._bet_type_stats.items()}
 
         # Use actual draw features from X
         draw_features = X.flatten() if X.ndim > 1 else X
@@ -563,7 +514,9 @@ class AdaptiveAgent:
     def _select_bet_value(self, bet_type: BetType, predictions: dict[int, float]) -> Any:
         """Select the best bet value for a given bet type using predictions."""
         digit_types = (
-            BetType.MOT_SO, BetType.HAI_SO_TRUNG, BetType.BA_SO_TRUNG,
+            BetType.MOT_SO,
+            BetType.HAI_SO_TRUNG,
+            BetType.BA_SO_TRUNG,
         )
         if bet_type in digit_types:
             # Pick the digit with highest probability
@@ -930,7 +883,6 @@ class AdaptiveAgent:
         self._profit_curve.append(self.budget)
         self._max_budget = self.budget
         self._min_budget = self.budget
-        self._max_drawdown = 0
 
 
 def _calculate_bet_amount(agent: AdaptiveAgent) -> int:
