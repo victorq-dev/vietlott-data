@@ -156,17 +156,12 @@ def compute_cong_tong_ev(digit_probs: dict[int, float], total: int, multiplier: 
     -------
     float expected value per 10k bet
     """
-    from machine_learning.bingo18.simulator import CONG_TONG_PRIZE, CONG_TONG_MULTIPLIER
+    from machine_learning.bingo18.simulator import CONG_TONG_PRIZE
 
     total_probs = compute_total_probs(digit_probs)
     p = total_probs.get(total, 0.0)
-
-    if multiplier:
-        mult = CONG_TONG_MULTIPLIER.get(total, 0.0)
-        return p * mult * 10_000 - 10_000  # EV per 10k bet
-    else:
-        prize = CONG_TONG_PRIZE.get(total, 0)
-        return p * prize - 10_000
+    prize = CONG_TONG_PRIZE.get(total, 0)
+    return p * prize - 10_000
 
 
 def compute_lon_hoa_nho_ev(digit_probs: dict[int, float], category: str, multiplier: bool = False) -> float:
@@ -182,14 +177,9 @@ def compute_lon_hoa_nho_ev(digit_probs: dict[int, float], category: str, multipl
     -------
     float expected value per 10k bet
     """
-    from machine_learning.bingo18.simulator import LON_HOA_NHO_PRIZE, LON_HOA_NHO_V2_MULTIPLIER
+    from machine_learning.bingo18.simulator import LON_HOA_NHO_PRIZE
 
     cat_probs = compute_category_probs(digit_probs)
     p = cat_probs.get(category, 0.0)
-
-    if multiplier:
-        mult = LON_HOA_NHO_V2_MULTIPLIER.get(category, 0.0)
-        return p * mult * 10_000 - 10_000
-    else:
-        prize = LON_HOA_NHO_PRIZE.get(category, 0)
-        return p * prize - 10_000
+    prize = LON_HOA_NHO_PRIZE.get(category, 0)
+    return p * prize - 10_000

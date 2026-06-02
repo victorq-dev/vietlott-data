@@ -324,17 +324,16 @@ class StrategyTrainer:
         """Select bet value for a bet type using digit probabilities."""
         digit_types = (
             BetType.MOT_SO, BetType.HAI_SO_TRUNG, BetType.BA_SO_TRUNG,
-            BetType.TRUNG_3SO, BetType.TRUNG_2SO, BetType.TRUNG_3SO_ANY,
         )
         if bt in digit_types:
             return max(digit_probs, key=digit_probs.get)
 
-        if bt in (BetType.CONG_TONG, BetType.CONG_TONG_MULT):
+        if bt == BetType.CONG_TONG:
             # Estimate most likely total
             mean_digit = sum(d * p for d, p in digit_probs.items())
             return int(round(mean_digit * 3))
 
-        if bt in (BetType.LON_HOA_NHO, BetType.LON_HOA_NHO_V2):
+        if bt == BetType.LON_HOA_NHO:
             low_prob = np.mean([digit_probs.get(d, 0) for d in [1, 2, 3]])
             high_prob = np.mean([digit_probs.get(d, 0) for d in [4, 5, 6]])
             if low_prob > high_prob:

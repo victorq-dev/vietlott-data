@@ -199,7 +199,8 @@ class RaceCoordinator:
                 if not agent.is_alive:
                     logger.info(f"[{agent.agent_id}] BANKRUPT at draw {i}, final balance={agent.budget:,}")
 
-                # Check adaptation
+                # Increment draw counter once per draw, then adapt
+                agent.increment_draw_counter()
                 if agent.maybe_adapt():
                     logger.debug(f"[{agent.agent_id}] Adapted (gen {agent._generation})")
 

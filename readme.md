@@ -320,6 +320,82 @@ uv sync --dev
 uv run pytest
 ```
 
+---
+
+## 🤖 Bingo18 ML Agent
+
+Train adaptive betting agents that learn which bet types perform best on historical Bingo18 data.
+
+### Bet Types
+
+| Bet Type | Win Condition | Payout (per 10k bet) |
+|----------|--------------|----------------------|
+| `mot_so` | Pick digit (1-6), win per occurrence | 1× → 12k, 2× → 20k, 3× → 30k |
+| `hai_so_trung` | Pick digit, appears ≥2 times | 75k |
+| `ba_so_trung` | Pick digit, appears all 3 times | 1,200k |
+| `cong_tong` | Pick sum (3-18), exact match | 44k–1,200k (varies by sum) |
+| `lon_hoa_nho` | Pick Nhỏ (3-9) / Hòa (10-11) / Lớn (12-18) | 15k / 20k / 15k |
+
+### Commands
+
+#### Train agents (learn from historical data)
+
+```bash
+# Train 15 agents in parallel, 3 rounds through data
+PYTHONPATH=src python3 -m machine_learning.bingo18.cli train-live --n-agents 15
+
+# More rounds, custom budget
+PYTHONPATH=src python3 -m machine_learning.bingo18.cli train-live --n-agents 15 --rounds 10 --budget 1000000
+
+# Start fresh (ignore saved state)
+PYTHONPATH=src python3 -m machine_learning.bingo18.cli train-live --n-agents 15 --fresh
+
+# Continue training on new data (loads saved agents, keeps learned weights)
+PYTHONPATH=src python3 -m machine_learning.bingo18.cli train-live --n-agents 15 --data-path data/bingo18_new.jsonl
+```
+
+Agent states are saved to `models/bingo18/agents/` after each round and on Ctrl+C.
+
+#### View agent statistics
+
+```bash
+# Overview of all saved agents + aggregate bet type performance
+PYTHONPATH=src python3 -m machine_learning.bingo18.cli stats
+
+# Show top 5 bet types per agent
+PYTHONPATH=src python3 -m machine_learning.bingo18.cli stats --top-bets 5
+
+# Full bet type breakdown per agent
+PYTHONPATH=src python3 -m machine_learning.bingo18.cli stats --detail
+```
+
+#### Backtest on new data (frozen weights)
+
+```bash
+# Backtest top 3 agents on a new dataset (weights do not change)
+PYTHONPATH=src python3 -m machine_learning.bingo18.cli eval --data-path data/bingo18_new.jsonl
+
+# Backtest a specific agent
+PYTHONPATH=src python3 -m machine_learning.bingo18.cli eval --agent agent_012 --data-path data/bingo18_new.jsonl
+
+# Backtest all saved agents
+PYTHONPATH=src python3 -m machine_learning.bingo18.cli eval --top-n 0 --data-path data/bingo18_new.jsonl
+```
+
+#### Workflow
+
+```
+1. train-live   →  agents learn bet-type weights from historical data
+                   saved to models/bingo18/agents/*.json
+
+2. stats        →  inspect which agents and bet types perform best
+
+3. eval         →  load best agent, run on new data with frozen weights
+                   to verify strategy generalizes
+```
+
+---
+
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
