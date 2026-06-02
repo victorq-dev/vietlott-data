@@ -759,7 +759,7 @@ def race_with_strategy(budget: int, bet_size: int, n_agents: int, data_path: str
 @click.option("--n-agents", type=int, default=5, help="Number of parallel training agents")
 @click.option("--epochs", type=int, default=10, help="Training epochs per agent")
 @click.option("--budget", type=int, default=500_000, help="Starting budget per agent")
-@click.option("--output", type=click.Path(), default="/tmp/bingo18_parallel", help="Output directory for models")
+@click.option("--output", type=click.Path(), default="models/bingo18/parallel", help="Output directory for parallel training models")
 @click.option("--data-path", type=click.Path(exists=True), default=None, help="Path to bingo18.jsonl")
 def train_parallel(n_agents: int, epochs: int, budget: int, output: str, data_path: str | None):
     """Train multiple strategy models in parallel and select the best.

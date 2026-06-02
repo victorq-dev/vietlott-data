@@ -319,3 +319,4 @@ pyrightconfig.json
 # Local scripts
 crawl_local.sh
 charts/
+models/

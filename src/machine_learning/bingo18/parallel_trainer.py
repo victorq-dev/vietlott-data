@@ -116,7 +116,7 @@ def run_parallel_training(
     df: pd.DataFrame,
     model: Bingo18Model,
     configs: list[TrainingConfig],
-    output_dir: str | Path = "/tmp/bingo18_parallel",
+    output_dir: str | Path = "models/bingo18/parallel",
     max_workers: int | None = None,
 ) -> ParallelTrainingResult:
     """Run multiple training agents in parallel.
@@ -133,7 +133,7 @@ def run_parallel_training(
     -------
     ParallelTrainingResult with best model and all results
     """
-    output_dir = Path(output_dir)
+    output_dir = Path.cwd() / Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     start = time.time()
