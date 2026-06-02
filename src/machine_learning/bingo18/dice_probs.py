@@ -4,21 +4,36 @@ Provides precomputed lookup tables for fast EV scoring in agent decisions.
 Replaces heuristic estimations with mathematically correct probabilities.
 """
 
-import numpy as np
 from functools import lru_cache
+
+import numpy as np
 
 # Precomputed: probability of each total (3-18) for fair 3d6
 # P(total=T) = number of ways to get T / 216
 _TOTAL_COUNTS = {
-    3: 1, 4: 3, 5: 6, 6: 10, 7: 15, 8: 21, 9: 25, 10: 27,
-    11: 27, 12: 25, 13: 21, 14: 15, 15: 10, 16: 6, 17: 3, 18: 1,
+    3: 1,
+    4: 3,
+    5: 6,
+    6: 10,
+    7: 15,
+    8: 21,
+    9: 25,
+    10: 27,
+    11: 27,
+    12: 25,
+    13: 21,
+    14: 15,
+    15: 10,
+    16: 6,
+    17: 3,
+    18: 1,
 }
 FAIR_TOTAL_PROBS = {t: c / 216.0 for t, c in _TOTAL_COUNTS.items()}
 
 # Precomputed: category probabilities for fair 3d6
 FAIR_CATEGORY_PROBS = {
-    "Nhỏ": sum(FAIR_TOTAL_PROBS[t] for t in range(3, 10)),   # 3-9
-    "Hòa": sum(FAIR_TOTAL_PROBS[t] for t in [10, 11]),        # 10-11
+    "Nhỏ": sum(FAIR_TOTAL_PROBS[t] for t in range(3, 10)),  # 3-9
+    "Hòa": sum(FAIR_TOTAL_PROBS[t] for t in [10, 11]),  # 10-11
     "Lớn": sum(FAIR_TOTAL_PROBS[t] for t in range(12, 19)),  # 12-18
 }
 
@@ -26,8 +41,8 @@ FAIR_CATEGORY_PROBS = {
 # For fair dice, P(digit=d) = 1/6 for each die
 _FAIR_P = 1.0 / 6.0
 FAIR_P_AT_LEAST_1 = 1 - (5.0 / 6.0) ** 3  # ~0.4213
-FAIR_P_AT_LEAST_2 = 3 * _FAIR_P ** 2 * (1 - _FAIR_P) + _FAIR_P ** 3  # ~0.0278
-FAIR_P_EXACT_3 = _FAIR_P ** 3  # ~0.00463
+FAIR_P_AT_LEAST_2 = 3 * _FAIR_P**2 * (1 - _FAIR_P) + _FAIR_P**3  # ~0.0278
+FAIR_P_EXACT_3 = _FAIR_P**3  # ~0.00463
 
 
 def compute_total_probs(digit_probs: dict[int, float]) -> dict[int, float]:
@@ -97,7 +112,7 @@ def compute_pair_prob(digit_probs: dict[int, float], digit: int) -> float:
     # P(exactly 2) = C(3,2) * p^2 * (1-p)
     # P(exactly 3) = p^3
     # P(at least 2) = 3*p^2*(1-p) + p^3
-    return 3 * p * p * (1 - p) + p ** 3
+    return 3 * p * p * (1 - p) + p**3
 
 
 def compute_triple_prob(digit_probs: dict[int, float], digit: int) -> float:
@@ -113,7 +128,7 @@ def compute_triple_prob(digit_probs: dict[int, float], digit: int) -> float:
     float probability
     """
     p = digit_probs.get(digit, 1.0 / 6.0)
-    return p ** 3
+    return p**3
 
 
 def compute_mot_so_ev(digit_probs: dict[int, float], digit: int) -> float:
@@ -134,10 +149,10 @@ def compute_mot_so_ev(digit_probs: dict[int, float], digit: int) -> float:
     q = 1 - p
 
     # P(exactly k matches in 3 dice) = C(3,k) * p^k * q^(3-k)
-    p0 = q ** 3
-    p1 = 3 * p * q ** 2
-    p2 = 3 * p ** 2 * q
-    p3 = p ** 3
+    p0 = q**3
+    p1 = 3 * p * q**2
+    p2 = 3 * p**2 * q
+    p3 = p**3
 
     expected_payout = p1 * 12_000 + p2 * 20_000 + p3 * 30_000
     return expected_payout - 10_000
@@ -156,17 +171,12 @@ def compute_cong_tong_ev(digit_probs: dict[int, float], total: int, multiplier: 
     -------
     float expected value per 10k bet
     """
-    from machine_learning.bingo18.simulator import CONG_TONG_PRIZE, CONG_TONG_MULTIPLIER
+    from machine_learning.bingo18.simulator import CONG_TONG_PRIZE
 
     total_probs = compute_total_probs(digit_probs)
     p = total_probs.get(total, 0.0)
-
-    if multiplier:
-        mult = CONG_TONG_MULTIPLIER.get(total, 0.0)
-        return p * mult * 10_000 - 10_000  # EV per 10k bet
-    else:
-        prize = CONG_TONG_PRIZE.get(total, 0)
-        return p * prize - 10_000
+    prize = CONG_TONG_PRIZE.get(total, 0)
+    return p * prize - 10_000
 
 
 def compute_lon_hoa_nho_ev(digit_probs: dict[int, float], category: str, multiplier: bool = False) -> float:
@@ -182,14 +192,9 @@ def compute_lon_hoa_nho_ev(digit_probs: dict[int, float], category: str, multipl
     -------
     float expected value per 10k bet
     """
-    from machine_learning.bingo18.simulator import LON_HOA_NHO_PRIZE, LON_HOA_NHO_V2_MULTIPLIER
+    from machine_learning.bingo18.simulator import LON_HOA_NHO_PRIZE
 
     cat_probs = compute_category_probs(digit_probs)
     p = cat_probs.get(category, 0.0)
-
-    if multiplier:
-        mult = LON_HOA_NHO_V2_MULTIPLIER.get(category, 0.0)
-        return p * mult * 10_000 - 10_000
-    else:
-        prize = LON_HOA_NHO_PRIZE.get(category, 0)
-        return p * prize - 10_000
+    prize = LON_HOA_NHO_PRIZE.get(category, 0)
+    return p * prize - 10_000

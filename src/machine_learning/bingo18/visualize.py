@@ -31,11 +31,6 @@ COLORS_BET_TYPE = {
     "ba_so_trung": "#e74c3c",
     "cong_tong": "#f39c12",
     "lon_hoa_nho": "#9b59b6",
-    "cong_tong_mult": "#e67e22",
-    "lon_hoa_nho_v2": "#1abc9c",
-    "trung_2so": "#e74c3c",
-    "trung_3so": "#c0392b",
-    "trung_3so_any": "#d35400",
 }
 DEFAULT_DPI = 150
 FIG_SIZE_DEFAULT = (12, 8)
@@ -668,3 +663,73 @@ def generate_race_report(
     report_path = output_dir / "race_report.md"
     report_path.write_text("\n".join(summary_lines), encoding="utf-8")
     logger.info(f"Race report saved to {report_path}")
+
+
+def export_agent_decisions_csv(
+    agent_results: list[dict[str, Any]],
+    output_dir: Path,
+) -> list[Path]:
+    """Export per-agent bet decisions to CSV files.
+
+    Parameters
+    ----------
+    agent_results : list[dict]
+        Each dict needs 'agent_id' and 'bet_history' (list[BetRecord]).
+    output_dir : Path
+        Directory to save CSV files.
+
+    Returns
+    -------
+    list[Path]
+        Paths of saved CSV files.
+    """
+    import csv
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    saved = []
+
+    for ar in agent_results:
+        agent_id = ar["agent_id"]
+        bet_history = ar.get("bet_history", [])
+        if not bet_history:
+            continue
+
+        csv_path = output_dir / f"{agent_id}_decisions.csv"
+        with csv_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                [
+                    "draw_id",
+                    "date",
+                    "bet_type",
+                    "bet_value",
+                    "actual_digits",
+                    "actual_total",
+                    "matches",
+                    "bet_amount",
+                    "payout",
+                    "profit",
+                    "budget_after",
+                ]
+            )
+            for bet in bet_history:
+                writer.writerow(
+                    [
+                        bet.draw_id,
+                        bet.date,
+                        bet.bet_type,
+                        bet.bet_value,
+                        bet.actual_digits,
+                        bet.actual_total,
+                        bet.matches,
+                        bet.bet_amount,
+                        bet.payout,
+                        bet.payout - bet.bet_amount,
+                        bet.budget_after,
+                    ]
+                )
+        saved.append(csv_path)
+        logger.info(f"Saved {csv_path} ({len(bet_history)} decisions)")
+
+    return saved

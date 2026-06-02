@@ -469,6 +469,60 @@ class TestRecordResult:
         assert len(agent._profit_curve) == 2
         assert agent._profit_curve[-1] == agent.budget
 
+    def test_record_result_does_not_increment_draw_counter(self, mock_model):
+        genome = AgentGenome()
+        agent = AdaptiveAgent(agent_id="test_r9", genome=genome, model=mock_model, budget=1_000_000)
+        agent.record_result(
+            bet_type=BetType.MOT_SO,
+            bet_value=3,
+            bet_amount=10_000,
+            actual_digits=[3, 4, 5],
+            actual_total=12,
+            date="2025-01-01",
+            draw_id="001",
+        )
+        assert agent._draws_since_adaptation == 0
+
+
+# --- Tests for increment_draw_counter ---
+
+
+class TestIncrementDrawCounter:
+    def test_counter_starts_at_zero(self, mock_model):
+        genome = AgentGenome()
+        agent = AdaptiveAgent(
+            agent_id="test_dc1", genome=genome, model=mock_model, budget=1_000_000, adaptation_interval=50
+        )
+        assert agent._draws_since_adaptation == 0
+
+    def test_increment_adds_one(self, mock_model):
+        genome = AgentGenome()
+        agent = AdaptiveAgent(agent_id="test_dc2", genome=genome, model=mock_model, budget=1_000_000)
+        agent.increment_draw_counter()
+        assert agent._draws_since_adaptation == 1
+
+    def test_multiple_increments(self, mock_model):
+        genome = AgentGenome()
+        agent = AdaptiveAgent(agent_id="test_dc3", genome=genome, model=mock_model, budget=1_000_000)
+        for _ in range(5):
+            agent.increment_draw_counter()
+        assert agent._draws_since_adaptation == 5
+
+    def test_record_result_does_not_increment(self, mock_model):
+        genome = AgentGenome()
+        agent = AdaptiveAgent(agent_id="test_dc4", genome=genome, model=mock_model, budget=1_000_000)
+        for _ in range(3):
+            agent.record_result(
+                bet_type=BetType.MOT_SO,
+                bet_value=3,
+                bet_amount=10_000,
+                actual_digits=[1, 2, 4],
+                actual_total=7,
+                date="2025-01-01",
+                draw_id="001",
+            )
+        assert agent._draws_since_adaptation == 0
+
 
 # --- Tests for maybe_adapt ---
 
@@ -688,47 +742,43 @@ class TestAgentProperties:
 
 class TestCalculateBetAmount:
     def test_base_amount(self, mock_model):
-        genome = AgentGenome(base_bet_fraction=0.02)
+        genome = AgentGenome()
         agent = AdaptiveAgent(agent_id="test_b1", genome=genome, model=mock_model, budget=1_000_000)
         amount = _calculate_bet_amount(agent)
-        # base = 1_000_000 * 0.02 = 20_000
-        assert amount >= agent.bet_size
+        assert amount == agent.bet_size
 
-    def test_amount_clamped_to_budget(self, mock_model):
-        genome = AgentGenome(base_bet_fraction=0.02)
+    def test_fixed_bet_size(self, mock_model):
+        genome = AgentGenome()
         agent = AdaptiveAgent(agent_id="test_b2", genome=genome, model=mock_model, budget=5_000, bet_size=10_000)
         amount = _calculate_bet_amount(agent)
-        assert amount <= agent.budget
+        assert amount == agent.bet_size
 
-    def test_hot_streak_increases_amount(self, mock_model):
-        genome = AgentGenome(base_bet_fraction=0.02, streak_sensitivity=0.5)
+    def test_fixed_bet_size_regardless_of_streak(self, mock_model):
+        genome = AgentGenome()
         agent = AdaptiveAgent(agent_id="test_b3", genome=genome, model=mock_model, budget=1_000_000)
-        agent._current_streak = 5  # Hot streak
+        agent._current_streak = 5
         amount_hot = _calculate_bet_amount(agent)
-        # Reset streak
         agent._current_streak = 0
         amount_normal = _calculate_bet_amount(agent)
-        assert amount_hot >= amount_normal
+        assert amount_hot == amount_normal == agent.bet_size
 
-    def test_cold_streak_decreases_amount(self, mock_model):
-        genome = AgentGenome(base_bet_fraction=0.02, streak_sensitivity=0.5)
+    def test_fixed_bet_size_regardless_of_cold_streak(self, mock_model):
+        genome = AgentGenome()
         agent = AdaptiveAgent(agent_id="test_b4", genome=genome, model=mock_model, budget=1_000_000)
-        agent._current_streak = -5  # Cold streak
+        agent._current_streak = -5
         amount_cold = _calculate_bet_amount(agent)
         agent._current_streak = 0
         amount_normal = _calculate_bet_amount(agent)
-        assert amount_cold <= amount_normal
+        assert amount_cold == amount_normal == agent.bet_size
 
-    def test_high_budget_health_increases(self, mock_model):
-        genome = AgentGenome(base_bet_fraction=0.02)
+    def test_fixed_bet_size_regardless_of_budget_health(self, mock_model):
+        genome = AgentGenome()
         agent = AdaptiveAgent(agent_id="test_b5", genome=genome, model=mock_model, budget=2_000_000)
         agent._starting_budget = 1_000_000
         amount_high = _calculate_bet_amount(agent)
-        # Reset to normal budget
         agent.budget = 1_000_000
         amount_normal = _calculate_bet_amount(agent)
-        # With budget_ratio > 1.5, health_mult = 1.2, so amount_high > amount_normal
-        assert amount_high > amount_normal
+        assert amount_high == amount_normal == agent.bet_size
 
 
 # --- Tests for create_diverse_agents ---

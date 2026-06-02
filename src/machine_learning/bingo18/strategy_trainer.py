@@ -122,9 +122,7 @@ class StrategyTrainer:
                 recent_ls = large_smalls[i - window : i]
 
                 try:
-                    X = self._feature_engineer.build_features_for_predict(
-                        recent_draws, recent_totals, recent_ls
-                    )
+                    X = self._feature_engineer.build_features_for_predict(recent_draws, recent_totals, recent_ls)
                 except (ValueError, IndexError):
                     continue
 
@@ -134,10 +132,7 @@ class StrategyTrainer:
 
                 # Build context
                 budget_ratio = budget / agent_state["starting_budget"]
-                bet_type_rois = {
-                    bt_name: stats.roi
-                    for bt_name, stats in agent_state["bet_type_stats"].items()
-                }
+                bet_type_rois = {bt_name: stats.roi for bt_name, stats in agent_state["bet_type_stats"].items()}
                 context = self._context_builder.build(
                     draw_features=draw_features,
                     digit_probs=digit_probs,
@@ -221,7 +216,9 @@ class StrategyTrainer:
 
                     # Epoch metrics
                     epoch_win_rate = sum(1 for r in epoch_rewards if r > 0) / len(epoch_rewards) if epoch_rewards else 0
-                    epoch_roi = (sum(epoch_rewards) / (len(epoch_rewards) * self.bet_size) * 100) if epoch_rewards else 0
+                    epoch_roi = (
+                        (sum(epoch_rewards) / (len(epoch_rewards) * self.bet_size) * 100) if epoch_rewards else 0
+                    )
 
                     epoch_metrics = {
                         "epoch": epoch + 1,
@@ -268,9 +265,7 @@ class StrategyTrainer:
             recent_ls = large_smalls[i - window : i]
 
             try:
-                X = self._feature_engineer.build_features_for_predict(
-                    recent_draws, recent_totals, recent_ls
-                )
+                X = self._feature_engineer.build_features_for_predict(recent_draws, recent_totals, recent_ls)
             except (ValueError, IndexError):
                 continue
 
@@ -323,18 +318,19 @@ class StrategyTrainer:
     def _select_bet_value(bt: BetType, digit_probs: dict[int, float]) -> Any:
         """Select bet value for a bet type using digit probabilities."""
         digit_types = (
-            BetType.MOT_SO, BetType.HAI_SO_TRUNG, BetType.BA_SO_TRUNG,
-            BetType.TRUNG_3SO, BetType.TRUNG_2SO, BetType.TRUNG_3SO_ANY,
+            BetType.MOT_SO,
+            BetType.HAI_SO_TRUNG,
+            BetType.BA_SO_TRUNG,
         )
         if bt in digit_types:
             return max(digit_probs, key=digit_probs.get)
 
-        if bt in (BetType.CONG_TONG, BetType.CONG_TONG_MULT):
+        if bt == BetType.CONG_TONG:
             # Estimate most likely total
             mean_digit = sum(d * p for d, p in digit_probs.items())
             return int(round(mean_digit * 3))
 
-        if bt in (BetType.LON_HOA_NHO, BetType.LON_HOA_NHO_V2):
+        if bt == BetType.LON_HOA_NHO:
             low_prob = np.mean([digit_probs.get(d, 0) for d in [1, 2, 3]])
             high_prob = np.mean([digit_probs.get(d, 0) for d in [4, 5, 6]])
             if low_prob > high_prob:

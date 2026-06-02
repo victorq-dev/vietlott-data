@@ -6,11 +6,7 @@ Supports all Bingo18 bet types based on official rules:
 - "ba_so_trung": Pick a number, win if all 3 draws are that number
 - "cong_tong": Pick a total (3-18), win if sum matches
 - "lon_hoa_nho": Pick Big/Draw/Small, win if total matches range
-- "cong_tong_mult": Pick total sum with multiplier-based payout
-- "lon_hoa_nho_v2": Big/Draw/Small with multiplier-based payout
-- "trung_2so": Any pair appears, x7.5
-- "trung_3so": Specific triple, x120
-- "trung_3so_any": Specific digit triple, x20
+
 """
 
 from dataclasses import dataclass, field
@@ -41,11 +37,6 @@ class BetType(str, Enum):
     BA_SO_TRUNG = "ba_so_trung"  # Pick number, win if appears 3 times
     CONG_TONG = "cong_tong"  # Pick total sum
     LON_HOA_NHO = "lon_hoa_nho"  # Pick Big/Draw/Small
-    CONG_TONG_MULT = "cong_tong_mult"  # Pick total sum, multiplier-based
-    LON_HOA_NHO_V2 = "lon_hoa_nho_v2"  # Big/Draw/Small, multiplier-based
-    TRUNG_2SO = "trung_2so"  # Specific digit pair (must pick digit 1-6)
-    TRUNG_3SO = "trung_3so"  # Specific triple
-    TRUNG_3SO_ANY = "trung_3so_any"  # Specific digit triple (must pick digit 1-6)
 
 
 # Prize table for "Một số" (One number) bet
@@ -85,34 +76,6 @@ BA_SO_TRUNG_PRIZE = 1_200_000  # All 3 digits match (specific number)
 BA_SO_TRUNG_ANY_PRIZE = 200_000  # All 3 digits match (any triple)
 
 # Multiplier-based prize tables (payout = bet_size * multiplier)
-CONG_TONG_MULTIPLIER = {
-    3: 120.0,
-    4: 40.0,
-    5: 20.0,
-    6: 12.0,
-    7: 8.0,
-    8: 5.5,
-    9: 4.7,
-    10: 4.4,
-    11: 4.4,
-    12: 4.7,
-    13: 5.5,
-    14: 8.0,
-    15: 12.0,
-    16: 20.0,
-    17: 40.0,
-    18: 120.0,
-}
-
-LON_HOA_NHO_V2_MULTIPLIER = {
-    "Nhỏ": 1.5,  # Total 3-9
-    "Hòa": 2.0,  # Total 10-11
-    "Lớn": 1.5,  # Total 12-18
-}
-
-TRUNG_2SO_MULTIPLIER = 7.5
-TRUNG_3SO_MULTIPLIER = 120.0
-TRUNG_3SO_ANY_MULTIPLIER = 20.0
 
 
 @dataclass
@@ -242,48 +205,6 @@ def calculate_payout(bet_type: BetType, bet_value: Any, actual_digits: list[int]
             prize = LON_HOA_NHO_PRIZE.get(bet_value, 0)
             payout = int(prize * (bet_size / 10_000))
             return 1, payout
-        return 0, 0
-
-    elif bet_type == BetType.CONG_TONG_MULT:
-        # Bet on total sum, multiplier-based
-        if actual_total == bet_value:
-            mult = CONG_TONG_MULTIPLIER.get(bet_value, 0)
-            return 1, int(bet_size * mult)
-        return 0, 0
-
-    elif bet_type == BetType.LON_HOA_NHO_V2:
-        # Big/Draw/Small, multiplier-based
-        if actual_total <= 9:
-            category = "Nhỏ"
-        elif actual_total <= 11:
-            category = "Hòa"
-        else:
-            category = "Lớn"
-
-        if category == bet_value:
-            mult = LON_HOA_NHO_V2_MULTIPLIER.get(bet_value, 0)
-            return 1, int(bet_size * mult)
-        return 0, 0
-
-    elif bet_type == BetType.TRUNG_2SO:
-        # Specific digit pair - must pick digit 1-6, win if it appears 2+
-        count = actual_digits.count(bet_value)
-        if count >= 2:
-            return count, int(bet_size * TRUNG_2SO_MULTIPLIER)
-        return 0, 0
-
-    elif bet_type == BetType.TRUNG_3SO:
-        # Specific triple
-        count = actual_digits.count(bet_value)
-        if count == 3:
-            return 3, int(bet_size * TRUNG_3SO_MULTIPLIER)
-        return count, 0
-
-    elif bet_type == BetType.TRUNG_3SO_ANY:
-        # Specific digit triple - must pick digit 1-6, win if all 3 match
-        count = actual_digits.count(bet_value)
-        if count >= 3:
-            return count, int(bet_size * TRUNG_3SO_ANY_MULTIPLIER)
         return 0, 0
 
     else:
@@ -429,21 +350,14 @@ class Bingo18Simulator:
         """Select bet value based on bet_type and strategy."""
         probs = self.model.predict_proba(X)
 
-        if self.bet_type in (BetType.MOT_SO, BetType.HAI_SO_TRUNG, BetType.BA_SO_TRUNG, BetType.TRUNG_3SO, BetType.TRUNG_2SO):
+        if self.bet_type in (BetType.MOT_SO, BetType.HAI_SO_TRUNG, BetType.BA_SO_TRUNG):
             return self._select_digit(probs)
 
-        elif self.bet_type in (BetType.CONG_TONG, BetType.CONG_TONG_MULT):
-            if self.bet_type == BetType.CONG_TONG_MULT and self.model.total_clf is not None:
-                return self._select_total_ml(X)
+        elif self.bet_type == BetType.CONG_TONG:
             return self._select_total(probs)
 
-        elif self.bet_type in (BetType.LON_HOA_NHO, BetType.LON_HOA_NHO_V2):
-            if self.bet_type == BetType.LON_HOA_NHO_V2 and self.model.total_clf is not None:
-                return self._select_category_ml(X)
+        elif self.bet_type == BetType.LON_HOA_NHO:
             return self._select_category(probs)
-
-        elif self.bet_type == BetType.TRUNG_3SO_ANY:
-            return self._select_digit(probs)
 
         else:
             raise ValueError(f"Unknown bet type: {self.bet_type}")
@@ -739,55 +653,11 @@ class Bingo18Simulator:
                     ev = p * CONG_TONG_PRIZE.get(t, 0) / 10_000
                     scored.append((ev, bt, t))
 
-            elif bt == BetType.CONG_TONG_MULT:
-                if self.model.total_clf is not None:
-                    total_probs = self.model.predict_total_proba(X)
-                    for t, p in total_probs.items():
-                        ev = p * CONG_TONG_MULTIPLIER.get(t, 0)
-                        scored.append((ev, bt, t))
-                else:
-                    for t in range(3, 19):
-                        p = self._estimate_total_prob(probs, t)
-                        ev = p * CONG_TONG_MULTIPLIER.get(t, 0)
-                        scored.append((ev, bt, t))
-
             elif bt == BetType.LON_HOA_NHO:
                 cat_probs = self._estimate_category_probs(probs)
                 for cat, p in cat_probs.items():
                     ev = p * LON_HOA_NHO_PRIZE.get(cat, 0) / 10_000
                     scored.append((ev, bt, cat))
-
-            elif bt == BetType.LON_HOA_NHO_V2:
-                if self.model.total_clf is not None:
-                    total_probs = self.model.predict_total_proba(X)
-                    p_small = sum(total_probs.get(t, 0) for t in range(3, 10))
-                    p_draw = sum(total_probs.get(t, 0) for t in [10, 11])
-                    p_big = sum(total_probs.get(t, 0) for t in range(12, 19))
-                else:
-                    cat_probs = self._estimate_category_probs(probs)
-                    p_small, p_draw, p_big = cat_probs["Nhỏ"], cat_probs["Hòa"], cat_probs["Lớn"]
-                for cat, p in [("Nhỏ", p_small), ("Hòa", p_draw), ("Lớn", p_big)]:
-                    ev = p * LON_HOA_NHO_V2_MULTIPLIER.get(cat, 0)
-                    scored.append((ev, bt, cat))
-
-            elif bt == BetType.TRUNG_2SO:
-                for d in range(1, 7):
-                    p = probs.get(d, 0)
-                    p_pair = 3 * p * p * (1 - p) + p * p * p
-                    ev = p_pair * TRUNG_2SO_MULTIPLIER
-                    scored.append((ev, bt, d))
-
-            elif bt == BetType.TRUNG_3SO:
-                for d in range(1, 7):
-                    p = probs.get(d, 0) ** 3
-                    ev = p * TRUNG_3SO_MULTIPLIER
-                    scored.append((ev, bt, d))
-
-            elif bt == BetType.TRUNG_3SO_ANY:
-                for d in range(1, 7):
-                    p = probs.get(d, 0) ** 3
-                    ev = p * TRUNG_3SO_ANY_MULTIPLIER
-                    scored.append((ev, bt, d))
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return scored

@@ -8,6 +8,7 @@ Provides an adaptive betting agent that:
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -15,15 +16,10 @@ from loguru import logger
 
 from machine_learning.bingo18.model import Bingo18Model
 from machine_learning.bingo18.simulator import (
-    CONG_TONG_MULTIPLIER,
     CONG_TONG_PRIZE,
     HAI_SO_TRUNG_PRIZE,
     LON_HOA_NHO_PRIZE,
-    LON_HOA_NHO_V2_MULTIPLIER,
     MOT_SO_PRIZE,
-    TRUNG_2SO_MULTIPLIER,
-    TRUNG_3SO_ANY_MULTIPLIER,
-    TRUNG_3SO_MULTIPLIER,
     BetRecord,
     BetType,
     SimulationResult,
@@ -40,11 +36,6 @@ DEFAULT_BET_TYPE_WEIGHTS: dict[str, float] = {
     "ba_so_trung": 1.0,
     "cong_tong": 1.0,
     "lon_hoa_nho": 1.0,
-    "cong_tong_mult": 1.0,
-    "lon_hoa_nho_v2": 1.0,
-    "trung_2so": 1.0,
-    "trung_3so": 1.0,
-    "trung_3so_any": 1.0,
 }
 
 # Weight clamp bounds
@@ -213,72 +204,6 @@ class AdaptiveAgent:
         """Maximum drawdown from peak budget."""
         return self._max_drawdown
 
-    def _calibrate_predictions(self, predictions: dict[int, float]) -> dict[int, float]:
-        """Calibrate model predictions toward uniform to avoid false positive EV.
-
-        Blends model predictions with uniform distribution (1/6 each).
-        This prevents the model from creating overconfident predictions that
-        appear to have positive EV when they don't.
-
-        Parameters
-        ----------
-        predictions : dict[int, float]
-            Raw model predictions
-
-        Returns
-        -------
-        dict[int, float] : calibrated predictions
-        """
-        alpha = 1.0  # Use raw model predictions (no calibration)
-        uniform = 1.0 / 6.0
-        calibrated = {}
-        for d in range(1, 7):
-            raw = predictions.get(d, uniform)
-            calibrated[d] = alpha * raw + (1 - alpha) * uniform
-        return calibrated
-
-    def _has_acceptable_ev_bet(self, predictions: dict[int, float], threshold: float = -0.30) -> bool:
-        """Check if any bet type has EV above threshold.
-
-        For fair 3d6, all bets have ~43-50% house edge (-0.43 to -0.50 EV).
-        This gate skips draws where all bets are very negative EV, only
-        allowing bets when model predictions suggest lower house edge.
-
-        Parameters
-        ----------
-        predictions : dict[int, float]
-            Digit probabilities
-        threshold : float
-            Minimum acceptable EV per unit bet (default -0.30 = 30% house edge)
-
-        Returns
-        -------
-        bool : True if at least one bet type has EV > threshold
-        """
-        from machine_learning.bingo18.dice_probs import (
-            compute_mot_so_ev, compute_cong_tong_ev, compute_lon_hoa_nho_ev,
-        )
-
-        # Check MOT_SO (digit bets) - per 10k bet, normalize to per-unit
-        for d in range(1, 7):
-            ev = compute_mot_so_ev(predictions, d)
-            if ev / 10_000 > threshold:
-                return True
-
-        # Check CONG_TONG (sum bets)
-        for t in range(3, 19):
-            ev = compute_cong_tong_ev(predictions, t)
-            if ev / 10_000 > threshold:
-                return True
-
-        # Check LON_HOA_NHO (category bets)
-        for cat in ['Nhỏ', 'Hòa', 'Lớn']:
-            ev = compute_lon_hoa_nho_ev(predictions, cat)
-            if ev / 10_000 > threshold:
-                return True
-
-        return False
-
     def _best_ev_score(self, predictions: dict[int, float]) -> float:
         """Return the best (least negative) EV among all bet types.
 
@@ -286,7 +211,9 @@ class AdaptiveAgent:
         Returns EV per unit bet (e.g., -0.43 for MOT_SO with fair dice).
         """
         from machine_learning.bingo18.dice_probs import (
-            compute_mot_so_ev, compute_cong_tong_ev, compute_lon_hoa_nho_ev,
+            compute_cong_tong_ev,
+            compute_lon_hoa_nho_ev,
+            compute_mot_so_ev,
         )
 
         best_ev = -1.0
@@ -299,7 +226,7 @@ class AdaptiveAgent:
             ev = compute_cong_tong_ev(predictions, t) / 10_000
             best_ev = max(best_ev, ev)
 
-        for cat in ['Nhỏ', 'Hòa', 'Lớn']:
+        for cat in ["Nhỏ", "Hòa", "Lớn"]:
             ev = compute_lon_hoa_nho_ev(predictions, cat) / 10_000
             best_ev = max(best_ev, ev)
 
@@ -341,17 +268,18 @@ class AdaptiveAgent:
             # Positive EV: never skip
             skip_rate = 0.0
         else:
-            # Map EV range [-0.50, 0] to skip rate [0.95, 0.40]
+            # Map EV range [-0.50, 0] to skip rate [0.60, 0.15]
+            # Less aggressive: fair 3d6 EV ~-0.43 → skip_rate ~0.52
             clamped_ev = max(-0.50, min(0.0, best_ev))
-            skip_rate = 0.95 + (clamped_ev + 0.50) * (0.40 - 0.95) / (0.0 + 0.50)
-            skip_rate = max(0.40, min(0.95, skip_rate))
+            skip_rate = 0.60 + (clamped_ev + 0.50) * (0.15 - 0.60) / (0.0 + 0.50)
+            skip_rate = max(0.15, min(0.60, skip_rate))
 
             # Additional skip when budget is low
             budget_ratio = self.budget / self._starting_budget if self._starting_budget > 0 else 1.0
             if budget_ratio < 0.25:
-                skip_rate = max(skip_rate, 0.97)
+                skip_rate = max(skip_rate, 0.75)
             elif budget_ratio < 0.5:
-                skip_rate = max(skip_rate, 0.85)
+                skip_rate = max(skip_rate, 0.60)
 
         if self._rng.random() < skip_rate:
             return []
@@ -419,47 +347,15 @@ class AdaptiveAgent:
             elif bt == BetType.CONG_TONG:
                 for t in range(3, 19):
                     p = self._estimate_total_prob(predictions, t)
-                    ev = p * CONG_TONG_PRIZE.get(t, 0) / 10_000
-                    scored.append((ev, bt, t))
-
-            elif bt == BetType.CONG_TONG_MULT:
-                for t in range(3, 19):
-                    p = self._estimate_total_prob(predictions, t)
-                    ev = p * CONG_TONG_MULTIPLIER.get(t, 0)
+                    ev = p * CONG_TONG_PRIZE.get(t, 0) / 10_000 - 1.0
                     scored.append((ev, bt, t))
 
             elif bt == BetType.LON_HOA_NHO:
                 if cat_probs_cache is None:
                     cat_probs_cache = self._estimate_category_probs(predictions)
                 for cat, p in cat_probs_cache.items():
-                    ev = p * LON_HOA_NHO_PRIZE.get(cat, 0) / 10_000
+                    ev = p * LON_HOA_NHO_PRIZE.get(cat, 0) / 10_000 - 1.0
                     scored.append((ev, bt, cat))
-
-            elif bt == BetType.LON_HOA_NHO_V2:
-                if cat_probs_cache is None:
-                    cat_probs_cache = self._estimate_category_probs(predictions)
-                for cat, p in cat_probs_cache.items():
-                    ev = p * LON_HOA_NHO_V2_MULTIPLIER.get(cat, 0)
-                    scored.append((ev, bt, cat))
-
-            elif bt == BetType.TRUNG_2SO:
-                for d in range(1, 7):
-                    p = predictions.get(d, 0)
-                    p_pair = 3 * p * p * (1 - p) + p * p * p
-                    ev = p_pair * TRUNG_2SO_MULTIPLIER
-                    scored.append((ev, bt, d))
-
-            elif bt == BetType.TRUNG_3SO:
-                for d in range(1, 7):
-                    p = predictions.get(d, 0) ** 3
-                    ev = p * TRUNG_3SO_MULTIPLIER
-                    scored.append((ev, bt, d))
-
-            elif bt == BetType.TRUNG_3SO_ANY:
-                for d in range(1, 7):
-                    p = predictions.get(d, 0) ** 3
-                    ev = p * TRUNG_3SO_ANY_MULTIPLIER
-                    scored.append((ev, bt, d))
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return scored
@@ -470,15 +366,15 @@ class AdaptiveAgent:
         if bt == BetType.MOT_SO:
             # Exact EV: P(1)*12000 + P(2)*20000 + P(3)*30000 - 10000
             q = 1 - p
-            p1 = 3 * p * q ** 2
-            p2 = 3 * p ** 2 * q
-            p3 = p ** 3
+            p1 = 3 * p * q**2
+            p2 = 3 * p**2 * q
+            p3 = p**3
             return (p1 * 12_000 + p2 * 20_000 + p3 * 30_000) / 10_000 - 1.0
         elif bt == BetType.HAI_SO_TRUNG:
             p_at_least_2 = 3 * p * p * (1 - p) + p * p * p
-            return p_at_least_2 * HAI_SO_TRUNG_PRIZE / 10_000
+            return p_at_least_2 * HAI_SO_TRUNG_PRIZE / 10_000 - 1.0
         elif bt == BetType.BA_SO_TRUNG:
-            return p**3 * 1_200_000 / 10_000
+            return p**3 * 1_200_000 / 10_000 - 1.0
         return 0.0
 
     @staticmethod
@@ -552,9 +448,7 @@ class AdaptiveAgent:
         # Build context
         ctx_builder = self._strategy_model.context_builder
         budget_ratio = self.budget / self._starting_budget if self._starting_budget > 0 else 1.0
-        bet_type_rois = {
-            bt_name: stats.roi for bt_name, stats in self._bet_type_stats.items()
-        }
+        bet_type_rois = {bt_name: stats.roi for bt_name, stats in self._bet_type_stats.items()}
 
         # Use actual draw features from X
         draw_features = X.flatten() if X.ndim > 1 else X
@@ -620,8 +514,9 @@ class AdaptiveAgent:
     def _select_bet_value(self, bet_type: BetType, predictions: dict[int, float]) -> Any:
         """Select the best bet value for a given bet type using predictions."""
         digit_types = (
-            BetType.MOT_SO, BetType.HAI_SO_TRUNG, BetType.BA_SO_TRUNG,
-            BetType.TRUNG_3SO, BetType.TRUNG_2SO, BetType.TRUNG_3SO_ANY,
+            BetType.MOT_SO,
+            BetType.HAI_SO_TRUNG,
+            BetType.BA_SO_TRUNG,
         )
         if bet_type in digit_types:
             # Pick the digit with highest probability
@@ -629,7 +524,7 @@ class AdaptiveAgent:
                 return max(predictions, key=lambda d: predictions[d])
             return 3  # Default middle digit
 
-        elif bet_type in (BetType.CONG_TONG, BetType.CONG_TONG_MULT):
+        elif bet_type == BetType.CONG_TONG:
             # Estimate best total from digit probabilities
             if predictions:
                 sorted_digits = sorted(predictions.items(), key=lambda x: x[1], reverse=True)
@@ -639,7 +534,7 @@ class AdaptiveAgent:
                 return max(3, min(18, estimated_total))
             return 10  # Default middle total
 
-        elif bet_type in (BetType.LON_HOA_NHO, BetType.LON_HOA_NHO_V2):
+        elif bet_type == BetType.LON_HOA_NHO:
             if predictions:
                 low_prob = np.mean([predictions.get(d, 0) for d in [1, 2, 3]])
                 high_prob = np.mean([predictions.get(d, 0) for d in [4, 5, 6]])
@@ -718,7 +613,8 @@ class AdaptiveAgent:
         )
         self._bet_history.append(record)
 
-        # Increment adaptation counter
+    def increment_draw_counter(self) -> None:
+        """Increment adaptation counter once per draw (call after all bets for a draw are recorded)."""
         self._draws_since_adaptation += 1
 
     def maybe_adapt(self) -> bool:
@@ -825,42 +721,173 @@ class AdaptiveAgent:
             profit_curve=list(self._profit_curve),
         )
 
+    def save(self, path: Path) -> None:
+        """Save agent state to JSON file.
+
+        Parameters
+        ----------
+        path : Path
+            Directory to save agent state file.
+        """
+        import json
+
+        path = Path(path)
+        path.mkdir(parents=True, exist_ok=True)
+        filepath = path / f"{self.agent_id}.json"
+
+        # Serialize bet_type_stats
+        stats_dict = {}
+        for bt_name, stats in self._bet_type_stats.items():
+            stats_dict[bt_name] = {
+                "total_bets": stats.total_bets,
+                "wins": stats.wins,
+                "total_wagered": stats.total_wagered,
+                "total_payout": stats.total_payout,
+            }
+
+        state = {
+            "agent_id": self.agent_id,
+            "genome": {
+                "algorithm": self.genome.algorithm,
+                "window": self.genome.window,
+                "n_estimators": self.genome.n_estimators,
+                "max_depth": self.genome.max_depth,
+                "risk_profile": self.genome.risk_profile,
+                "primary_strategy": self.genome.primary_strategy,
+                "exploration_rate": self.genome.exploration_rate,
+                "adaptation_rate": self.genome.adaptation_rate,
+                "base_bet_fraction": self.genome.base_bet_fraction,
+                "max_bets_per_draw": self.genome.max_bets_per_draw,
+                "multi_bet_budget_share": self.genome.multi_bet_budget_share,
+                "streak_sensitivity": self.genome.streak_sensitivity,
+                "bet_type_weights": list(self.genome.bet_type_weights),
+            },
+            "budget": self.budget,
+            "bet_size": self.bet_size,
+            "adaptation_interval": self.adaptation_interval,
+            "state": {
+                "bet_type_weights": self._bet_type_weights,
+                "bet_type_stats": stats_dict,
+                "current_streak": self._current_streak,
+                "total_bets": self._total_bets,
+                "wins": self._wins,
+                "losses": self._losses,
+                "profit_curve": self._profit_curve[-100:],  # last 100 points
+                "draws_since_adaptation": self._draws_since_adaptation,
+                "generation": self._generation,
+                "max_budget": self._max_budget,
+                "min_budget": self._min_budget,
+                "max_drawdown": self._max_drawdown,
+                "base_bet_fraction": self._base_bet_fraction,
+                "starting_budget": self._starting_budget,
+            },
+        }
+
+        with filepath.open("w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+        logger.info(f"[{self.agent_id}] State saved to {filepath}")
+
+    @classmethod
+    def load(cls, filepath: Path, model: Bingo18Model, strategy_model=None) -> "AdaptiveAgent":
+        """Load agent state from JSON file.
+
+        Parameters
+        ----------
+        filepath : Path
+            Path to agent state JSON file.
+        model : Bingo18Model
+            Trained model for predictions.
+        strategy_model : optional
+            Strategy model for bet decisions.
+
+        Returns
+        -------
+        AdaptiveAgent with restored state.
+        """
+        import json
+
+        filepath = Path(filepath)
+        with filepath.open("r", encoding="utf-8") as f:
+            state = json.load(f)
+
+        # Reconstruct genome
+        g = state["genome"]
+        genome = AgentGenome(
+            algorithm=g["algorithm"],
+            window=g["window"],
+            n_estimators=g["n_estimators"],
+            max_depth=g["max_depth"],
+            risk_profile=g["risk_profile"],
+            primary_strategy=g["primary_strategy"],
+            exploration_rate=g["exploration_rate"],
+            adaptation_rate=g["adaptation_rate"],
+            base_bet_fraction=g["base_bet_fraction"],
+            max_bets_per_draw=g["max_bets_per_draw"],
+            multi_bet_budget_share=g["multi_bet_budget_share"],
+            streak_sensitivity=g["streak_sensitivity"],
+            bet_type_weights=tuple(tuple(x) for x in g["bet_type_weights"]),
+        )
+
+        agent = cls(
+            agent_id=state["agent_id"],
+            genome=genome,
+            model=model,
+            budget=state["budget"],
+            bet_size=state["bet_size"],
+            adaptation_interval=state["adaptation_interval"],
+            strategy_model=strategy_model,
+        )
+
+        # Restore mutable state
+        s = state["state"]
+        agent._bet_type_weights = s["bet_type_weights"]
+        agent._current_streak = s["current_streak"]
+        agent._total_bets = s["total_bets"]
+        agent._wins = s["wins"]
+        agent._losses = s["losses"]
+        agent._profit_curve = s["profit_curve"]
+        agent._draws_since_adaptation = s["draws_since_adaptation"]
+        agent._generation = s["generation"]
+        agent._max_budget = s["max_budget"]
+        agent._min_budget = s["min_budget"]
+        agent._max_drawdown = s["max_drawdown"]
+        agent._base_bet_fraction = s["base_bet_fraction"]
+        agent._starting_budget = s["starting_budget"]
+
+        # Restore bet_type_stats
+        for bt_name, stats_dict in s.get("bet_type_stats", {}).items():
+            if bt_name in agent._bet_type_stats:
+                agent._bet_type_stats[bt_name].total_bets = stats_dict["total_bets"]
+                agent._bet_type_stats[bt_name].wins = stats_dict["wins"]
+                agent._bet_type_stats[bt_name].total_wagered = stats_dict["total_wagered"]
+                agent._bet_type_stats[bt_name].total_payout = stats_dict["total_payout"]
+
+        logger.info(
+            f"[{agent.agent_id}] Loaded state: budget={agent.budget:,}, "
+            f"bets={agent._total_bets}, gen={agent._generation}, "
+            f"ROI={agent.roi:+.1f}%"
+        )
+        return agent
+
+    def reset_budget(self) -> None:
+        """Reset budget to starting value while keeping learned state.
+
+        Called when agent goes bankrupt. The agent keeps all learned
+        weights and stats — only budget is reset.
+        """
+        logger.info(
+            f"[{self.agent_id}] Budget reset: {self.budget:,} -> {self._starting_budget:,} "
+            f"(keeping gen={self._generation}, {self._total_bets} bets experience)"
+        )
+        self.budget = self._starting_budget
+        self._profit_curve.append(self.budget)
+        self._max_budget = self.budget
+        self._min_budget = self.budget
+
 
 def _calculate_bet_amount(agent: AdaptiveAgent) -> int:
-    """Calculate bet amount with Kelly-inspired progressive sizing.
-
-    Scales bet size based on budget health:
-    - >150% budget: slight increase (120%)
-    - 100-150%: normal (100%)
-    - 50-100%: reduced (70%)
-    - 25-50%: heavily reduced (40%)
-    - <25%: minimum bets only (20%)
-    """
-    budget = min(agent.budget, 10**12)
-    base = (budget * round(agent._base_bet_fraction * 10000)) // 10000
-
-    # Streak multiplier
-    streak_num = 100
-    if agent._current_streak > 3:
-        streak_num = 100 + int(min(agent._current_streak - 3, 10) * 5 * agent.genome.streak_sensitivity)
-    elif agent._current_streak < -3:
-        streak_num = 100 - int(min(abs(agent._current_streak) - 3, 10) * 5 * agent.genome.streak_sensitivity)
-
-    # Progressive health multiplier based on budget vs starting
-    health_num = 100
-    if agent._starting_budget > 0:
-        if budget > agent._starting_budget * 3 // 2:
-            health_num = 120
-        elif budget < agent._starting_budget // 4:
-            health_num = 20  # critical: minimum bets
-        elif budget < agent._starting_budget // 2:
-            health_num = 40  # low: heavily reduced
-        elif budget < agent._starting_budget * 3 // 4:
-            health_num = 70  # moderate: reduced
-
-    amount = (base * streak_num * health_num) // 10000
-    amount = min(max(amount, agent.bet_size), agent.budget)
-    return amount
+    """Return fixed bet size. Strategy adapts bet TYPE, not size."""
+    return agent.bet_size
 
 
 def create_diverse_agents(
@@ -902,7 +929,7 @@ def create_diverse_agents(
     budget_shares = [0.03, 0.06, 0.10]
 
     agents: list[AdaptiveAgent] = []
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng()
 
     for i in range(n_agents):
         algo = algorithms[i % len(algorithms)]

@@ -143,7 +143,7 @@ def run_parallel_training(
 
     # Run sequentially for now (ProcessPoolExecutor has issues with large data)
     for i, config in enumerate(configs):
-        logger.info(f"[{i+1}/{len(configs)}] Training agent '{config.name}'...")
+        logger.info(f"[{i + 1}/{len(configs)}] Training agent '{config.name}'...")
         try:
             result = _train_single(config, df, model, output_dir)
             results.append(result)
@@ -164,15 +164,15 @@ def run_parallel_training(
 
     best = max(valid_results, key=lambda r: r.test_roi)
 
-    logger.info(f"\n{'='*60}")
+    logger.info(f"\n{'=' * 60}")
     logger.info(f"PARALLEL TRAINING COMPLETE ({elapsed:.1f}s)")
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
     logger.info(f"Best agent: {best.config.name}")
     logger.info(f"  ROI: {best.test_roi:.1f}%")
     logger.info(f"  Win rate: {best.test_win_rate:.1%}")
     logger.info(f"  Final budget: {best.test_final_budget:,}")
     logger.info(f"  Model saved: {best.model_path}")
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
 
     return ParallelTrainingResult(
         best=best,
@@ -200,16 +200,18 @@ def create_default_configs(seed: int = 42) -> list[TrainingConfig]:
         for hidden in [(64, 32), (128, 64), (64, 64, 32)]:
             for exploration in [0.2, 0.3, 0.4]:
                 for skip in [0.10, 0.15, 0.20]:
-                    name = f"lr{lr}_h{'x'.join(map(str,hidden))}_e{exploration}_s{skip}"
+                    name = f"lr{lr}_h{'x'.join(map(str, hidden))}_e{exploration}_s{skip}"
                     if name not in names_used:
-                        configs.append(TrainingConfig(
-                            name=name,
-                            learning_rate=lr,
-                            hidden_sizes=hidden,
-                            exploration_rate=exploration,
-                            skip_threshold=skip,
-                            random_state=int(rng.integers(10000)),
-                        ))
+                        configs.append(
+                            TrainingConfig(
+                                name=name,
+                                learning_rate=lr,
+                                hidden_sizes=hidden,
+                                exploration_rate=exploration,
+                                skip_threshold=skip,
+                                random_state=int(rng.integers(10000)),
+                            )
+                        )
                         names_used.add(name)
 
     # Random configs
@@ -220,13 +222,15 @@ def create_default_configs(seed: int = 42) -> list[TrainingConfig]:
         skip = float(rng.choice([0.08, 0.10, 0.12, 0.15, 0.18, 0.20, 0.25]))
 
         name = f"random_{i:02d}"
-        configs.append(TrainingConfig(
-            name=name,
-            learning_rate=lr,
-            hidden_sizes=hidden,
-            exploration_rate=exploration,
-            skip_threshold=skip,
-            random_state=int(rng.integers(10000)),
-        ))
+        configs.append(
+            TrainingConfig(
+                name=name,
+                learning_rate=lr,
+                hidden_sizes=hidden,
+                exploration_rate=exploration,
+                skip_threshold=skip,
+                random_state=int(rng.integers(10000)),
+            )
+        )
 
     return configs

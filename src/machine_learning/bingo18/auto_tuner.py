@@ -25,11 +25,6 @@ DEFAULT_BET_TYPES = [
     "ba_so_trung",
     "cong_tong",
     "lon_hoa_nho",
-    "cong_tong_mult",
-    "lon_hoa_nho_v2",
-    "trung_2so",
-    "trung_3so",
-    "trung_3so_any",
 ]
 DEFAULT_STRATEGIES = ["top_n", "threshold"]
 DEFAULT_THRESHOLDS = [0.12, 0.15]
