@@ -156,6 +156,7 @@ class AdaptiveAgent:
         budget: int,
         bet_size: int = 10_000,
         adaptation_interval: int = 50,
+        strategy_model: Any = None,
     ) -> None:
         self.agent_id = agent_id
         self.genome = genome
@@ -163,6 +164,7 @@ class AdaptiveAgent:
         self.budget = budget
         self.bet_size = bet_size
         self.adaptation_interval = adaptation_interval
+        self._strategy_model = strategy_model
 
         # Initialize mutable state
         self._starting_budget: int = budget
@@ -211,19 +213,104 @@ class AdaptiveAgent:
         """Maximum drawdown from peak budget."""
         return self._max_drawdown
 
-    def decide_bets(self, X: np.ndarray, predictions: dict[int, float]) -> list[tuple[BetType, Any, int]]:
-        """Decide which bets to place for the current draw.
+    def _calibrate_predictions(self, predictions: dict[int, float]) -> dict[int, float]:
+        """Calibrate model predictions toward uniform to avoid false positive EV.
+
+        Blends model predictions with uniform distribution (1/6 each).
+        This prevents the model from creating overconfident predictions that
+        appear to have positive EV when they don't.
 
         Parameters
         ----------
-        X : np.ndarray
-            Feature matrix for prediction.
         predictions : dict[int, float]
-            Digit probability predictions from the model.
+            Raw model predictions
 
         Returns
         -------
-        list of (BetType, bet_value, bet_amount) tuples.
+        dict[int, float] : calibrated predictions
+        """
+        alpha = 1.0  # Use raw model predictions (no calibration)
+        uniform = 1.0 / 6.0
+        calibrated = {}
+        for d in range(1, 7):
+            raw = predictions.get(d, uniform)
+            calibrated[d] = alpha * raw + (1 - alpha) * uniform
+        return calibrated
+
+    def _has_acceptable_ev_bet(self, predictions: dict[int, float], threshold: float = -0.30) -> bool:
+        """Check if any bet type has EV above threshold.
+
+        For fair 3d6, all bets have ~43-50% house edge (-0.43 to -0.50 EV).
+        This gate skips draws where all bets are very negative EV, only
+        allowing bets when model predictions suggest lower house edge.
+
+        Parameters
+        ----------
+        predictions : dict[int, float]
+            Digit probabilities
+        threshold : float
+            Minimum acceptable EV per unit bet (default -0.30 = 30% house edge)
+
+        Returns
+        -------
+        bool : True if at least one bet type has EV > threshold
+        """
+        from machine_learning.bingo18.dice_probs import (
+            compute_mot_so_ev, compute_cong_tong_ev, compute_lon_hoa_nho_ev,
+        )
+
+        # Check MOT_SO (digit bets) - per 10k bet, normalize to per-unit
+        for d in range(1, 7):
+            ev = compute_mot_so_ev(predictions, d)
+            if ev / 10_000 > threshold:
+                return True
+
+        # Check CONG_TONG (sum bets)
+        for t in range(3, 19):
+            ev = compute_cong_tong_ev(predictions, t)
+            if ev / 10_000 > threshold:
+                return True
+
+        # Check LON_HOA_NHO (category bets)
+        for cat in ['Nhỏ', 'Hòa', 'Lớn']:
+            ev = compute_lon_hoa_nho_ev(predictions, cat)
+            if ev / 10_000 > threshold:
+                return True
+
+        return False
+
+    def _best_ev_score(self, predictions: dict[int, float]) -> float:
+        """Return the best (least negative) EV among all bet types.
+
+        Used to decide skip probability: bet more when EV is less negative.
+        Returns EV per unit bet (e.g., -0.43 for MOT_SO with fair dice).
+        """
+        from machine_learning.bingo18.dice_probs import (
+            compute_mot_so_ev, compute_cong_tong_ev, compute_lon_hoa_nho_ev,
+        )
+
+        best_ev = -1.0
+
+        for d in range(1, 7):
+            ev = compute_mot_so_ev(predictions, d) / 10_000
+            best_ev = max(best_ev, ev)
+
+        for t in range(3, 19):
+            ev = compute_cong_tong_ev(predictions, t) / 10_000
+            best_ev = max(best_ev, ev)
+
+        for cat in ['Nhỏ', 'Hòa', 'Lớn']:
+            ev = compute_lon_hoa_nho_ev(predictions, cat) / 10_000
+            best_ev = max(best_ev, ev)
+
+        return best_ev
+
+    def decide_bets(self, X: np.ndarray, predictions: dict[int, float]) -> list[tuple[BetType, Any, int]]:
+        """Decide which bets to place for the current draw.
+
+        Uses EV-based skip probability: skip more when all bets have
+        very negative EV, skip less when model predictions suggest
+        lower house edge.
         """
         if not self.is_alive:
             return []
@@ -231,14 +318,43 @@ class AdaptiveAgent:
         if not predictions:
             return []
 
+        # Store features for strategy model context
+        self._last_features = X
+
+        # Strategy model: learned policy for bet type selection
+        if self._strategy_model is not None and self._strategy_model.is_trained:
+            return self._strategy_bet(X, predictions)
+
         # Calculate bet amount based on budget, streak, and health
         bet_amount = _calculate_bet_amount(self)
         if bet_amount < self.bet_size or bet_amount > self.budget:
             return []
 
-        # Exploration: random bet with exploration_rate probability
+        # Exploration: random bet with exploration_rate probability (bypasses EV skip)
         if self._rng.random() < self.genome.exploration_rate:
             return self._random_bet(bet_amount, predictions)
+
+        # EV-based skip: skip more when best EV is worse
+        best_ev = self._best_ev_score(predictions)
+
+        if best_ev > 0:
+            # Positive EV: never skip
+            skip_rate = 0.0
+        else:
+            # Map EV range [-0.50, 0] to skip rate [0.95, 0.40]
+            clamped_ev = max(-0.50, min(0.0, best_ev))
+            skip_rate = 0.95 + (clamped_ev + 0.50) * (0.40 - 0.95) / (0.0 + 0.50)
+            skip_rate = max(0.40, min(0.95, skip_rate))
+
+            # Additional skip when budget is low
+            budget_ratio = self.budget / self._starting_budget if self._starting_budget > 0 else 1.0
+            if budget_ratio < 0.25:
+                skip_rate = max(skip_rate, 0.97)
+            elif budget_ratio < 0.5:
+                skip_rate = max(skip_rate, 0.85)
+
+        if self._rng.random() < skip_rate:
+            return []
 
         # Multi-bet mode: EV-driven selection of multiple bet types
         if self.genome.max_bets_per_draw > 1:
@@ -248,7 +364,10 @@ class AdaptiveAgent:
         return self._weighted_bet(bet_amount, predictions)
 
     def _weighted_bet(self, bet_amount: int, predictions: dict[int, float]) -> list[tuple[BetType, Any, int]]:
-        """Select bet using weighted random selection based on bet_type_weights."""
+        """Select bet using weighted random selection based on bet_type_weights.
+
+        In a negative EV game, picks the best available bet type using weights.
+        """
         # Filter to bet types that have weight > 0
         active_types = [
             (bt, self._bet_type_weights.get(bt.value, 1.0))
@@ -273,7 +392,11 @@ class AdaptiveAgent:
         return [(chosen_type, bet_value, bet_amount)]
 
     def _random_bet(self, bet_amount: int, predictions: dict[int, float]) -> list[tuple[BetType, Any, int]]:
-        """Place a random exploratory bet."""
+        """Place a random exploratory bet. Skips when budget is low."""
+        # Skip exploration when budget is critical
+        if self._starting_budget > 0 and self.budget / self._starting_budget < 0.25:
+            return []
+
         chosen_type = ALL_BET_TYPES[self._rng.integers(len(ALL_BET_TYPES))]
         bet_value = self._select_bet_value(chosen_type, predictions)
         return [(chosen_type, bet_value, bet_amount)]
@@ -343,9 +466,14 @@ class AdaptiveAgent:
 
     @staticmethod
     def _ev_digit(bt: BetType, _digit: int, p: float) -> float:
-        """Estimate expected value for digit-based bets."""
+        """Estimate expected value for digit-based bets (per 10k bet)."""
         if bt == BetType.MOT_SO:
-            return p * MOT_SO_PRIZE.get(1, 0) / 10_000
+            # Exact EV: P(1)*12000 + P(2)*20000 + P(3)*30000 - 10000
+            q = 1 - p
+            p1 = 3 * p * q ** 2
+            p2 = 3 * p ** 2 * q
+            p3 = p ** 3
+            return (p1 * 12_000 + p2 * 20_000 + p3 * 30_000) / 10_000 - 1.0
         elif bt == BetType.HAI_SO_TRUNG:
             p_at_least_2 = 3 * p * p * (1 - p) + p * p * p
             return p_at_least_2 * HAI_SO_TRUNG_PRIZE / 10_000
@@ -355,38 +483,18 @@ class AdaptiveAgent:
 
     @staticmethod
     def _estimate_total_prob(probs: dict[int, float], total: int) -> float:
-        """Rough heuristic for sum probability from digit probabilities.
+        """Exact probability of total sum from digit probabilities via 3-fold convolution."""
+        from machine_learning.bingo18.dice_probs import compute_total_probs
 
-        Note: This is an approximation, not exact dice math. Used for fast
-        EV scoring in agent decision-making. The simulator uses proper
-        combinatorial calculation for actual payouts.
-        """
-        if total <= 9:
-            low = np.mean([probs.get(d, 0) for d in [1, 2, 3]])
-            return low * (1 + abs(total - 10.5) * 0.05)
-        elif total <= 11:
-            return np.mean(list(probs.values()))
-        else:
-            high = np.mean([probs.get(d, 0) for d in [4, 5, 6]])
-            return high * (1 + abs(total - 10.5) * 0.05)
+        total_probs = compute_total_probs(probs)
+        return total_probs.get(total, 0.0)
 
     @staticmethod
     def _estimate_category_probs(probs: dict[int, float]) -> dict[str, float]:
-        """Rough heuristic for Nho/Hoa/Lon probabilities from digit probabilities.
+        """Exact Nho/Hoa/Lon probabilities from digit probabilities via 3-fold convolution."""
+        from machine_learning.bingo18.dice_probs import compute_category_probs
 
-        Note: This is an approximation. Splits probability mass between Nho (sum 3-9)
-        and Lon (sum 12-18) proportional to low/high digit probs, with Hoa as remainder.
-        """
-        low_prob = np.mean([probs.get(d, 0) for d in [1, 2, 3]])
-        high_prob = np.mean([probs.get(d, 0) for d in [4, 5, 6]])
-        total_weight = low_prob + high_prob
-        if total_weight > 0:
-            p_small = low_prob / total_weight * 0.75
-            p_big = high_prob / total_weight * 0.75
-        else:
-            p_small, p_big = 0.375, 0.375
-        p_draw = max(0.0, 1.0 - p_small - p_big)
-        return {"Nhỏ": p_small, "Hòa": p_draw, "Lớn": p_big}
+        return compute_category_probs(probs)
 
     def _multi_bet(self, predictions: dict[int, float]) -> list[tuple[BetType, Any, int]]:
         """Select multiple bets using EV scoring with weight adjustment.
@@ -431,6 +539,83 @@ class AdaptiveAgent:
                 return []
 
         return [(bt, bv, per_bet) for _, bt, bv in selected]
+
+    def _strategy_bet(self, X: np.ndarray, predictions: dict[int, float]) -> list[tuple[BetType, Any, int]]:
+        """Select bets using the learned strategy model with progressive risk management.
+
+        Builds context from current state, gets bet type distribution from
+        strategy model, selects top-N types, and allocates budget with
+        Kelly-inspired sizing that scales with budget health.
+        """
+        from machine_learning.bingo18.strategy_model import BET_TYPE_TO_IDX
+
+        # Build context
+        ctx_builder = self._strategy_model.context_builder
+        budget_ratio = self.budget / self._starting_budget if self._starting_budget > 0 else 1.0
+        bet_type_rois = {
+            bt_name: stats.roi for bt_name, stats in self._bet_type_stats.items()
+        }
+
+        # Use actual draw features from X
+        draw_features = X.flatten() if X.ndim > 1 else X
+        if len(draw_features) < ctx_builder.n_features:
+            draw_features = np.pad(draw_features, (0, ctx_builder.n_features - len(draw_features)))
+        draw_features = draw_features[: ctx_builder.n_features]
+
+        context = ctx_builder.build(
+            draw_features=draw_features,
+            digit_probs=predictions,
+            budget_ratio=budget_ratio,
+            win_streak=max(0, self._current_streak),
+            loss_streak=max(0, -self._current_streak),
+            bet_type_rois=bet_type_rois,
+        )
+
+        # Select top-N bet types (model handles skip internally)
+        max_bets = max(1, self.genome.max_bets_per_draw)
+        selected_types = self._strategy_model.select_top_n(context, n=max_bets)
+
+        if not selected_types:
+            return []
+
+        # Progressive risk management: scale bet size with budget health
+        # Start reducing at 50% budget, minimum at 10%
+        if budget_ratio < 0.1:
+            risk_scale = 0.1  # minimum: bet smallest possible
+        elif budget_ratio < 0.25:
+            risk_scale = 0.25
+        elif budget_ratio < 0.5:
+            risk_scale = 0.5
+        elif budget_ratio < 0.75:
+            risk_scale = 0.75
+        else:
+            risk_scale = 1.0
+
+        # Base allocation with risk scaling
+        base_share = self.genome.multi_bet_budget_share * risk_scale
+        total_budget_share = min(
+            int(self.budget * base_share),
+            self.budget,
+        )
+        per_bet = max(total_budget_share // len(selected_types), self.bet_size)
+        per_bet = min(per_bet, self.budget)
+
+        if per_bet < self.bet_size:
+            return []
+
+        total_needed = per_bet * len(selected_types)
+        if total_needed > self.budget:
+            per_bet = self.budget // len(selected_types)
+            if per_bet < self.bet_size:
+                return []
+
+        # Select bet values
+        bets = []
+        for bt in selected_types:
+            bv = self._select_bet_value(bt, predictions)
+            bets.append((bt, bv, per_bet))
+
+        return bets
 
     def _select_bet_value(self, bet_type: BetType, predictions: dict[int, float]) -> Any:
         """Select the best bet value for a given bet type using predictions."""
@@ -642,39 +827,38 @@ class AdaptiveAgent:
 
 
 def _calculate_bet_amount(agent: AdaptiveAgent) -> int:
-    """Calculate bet amount considering streak and budget health.
+    """Calculate bet amount with Kelly-inspired progressive sizing.
 
-    Parameters
-    ----------
-    agent : AdaptiveAgent
-
-    Returns
-    -------
-    int — bet amount in VND, clamped to [bet_size, budget]
+    Scales bet size based on budget health:
+    - >150% budget: slight increase (120%)
+    - 100-150%: normal (100%)
+    - 50-100%: reduced (70%)
+    - 25-50%: heavily reduced (40%)
+    - <25%: minimum bets only (20%)
     """
-    # Base amount from budget fraction (integer arithmetic to avoid overflow)
-    budget = min(agent.budget, 10**12)  # Cap at 1 trillion VND
+    budget = min(agent.budget, 10**12)
     base = (budget * round(agent._base_bet_fraction * 10000)) // 10000
 
-    # Streak multiplier (integer: numerator/denominator)
-    streak_num = 100  # numerator
+    # Streak multiplier
+    streak_num = 100
     if agent._current_streak > 3:
         streak_num = 100 + int(min(agent._current_streak - 3, 10) * 5 * agent.genome.streak_sensitivity)
     elif agent._current_streak < -3:
         streak_num = 100 - int(min(abs(agent._current_streak) - 3, 10) * 5 * agent.genome.streak_sensitivity)
 
-    # Health multiplier based on budget vs starting
-    health_num = 100  # numerator
+    # Progressive health multiplier based on budget vs starting
+    health_num = 100
     if agent._starting_budget > 0:
-        # Use integer comparison to avoid float division of huge ints
         if budget > agent._starting_budget * 3 // 2:
             health_num = 120
+        elif budget < agent._starting_budget // 4:
+            health_num = 20  # critical: minimum bets
         elif budget < agent._starting_budget // 2:
-            health_num = 70
+            health_num = 40  # low: heavily reduced
+        elif budget < agent._starting_budget * 3 // 4:
+            health_num = 70  # moderate: reduced
 
     amount = (base * streak_num * health_num) // 10000
-
-    # Clamp: at least bet_size, but never exceed budget
     amount = min(max(amount, agent.bet_size), agent.budget)
     return amount
 

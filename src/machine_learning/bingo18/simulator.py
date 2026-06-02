@@ -804,31 +804,17 @@ class Bingo18Simulator:
         return 0.0
 
     def _estimate_total_prob(self, probs: dict[int, float], total: int) -> float:
-        """Estimate probability of a specific total from digit probs."""
-        if total <= 9:
-            low = np.mean([probs.get(d, 0) for d in [1, 2, 3]])
-            return low * (1 + abs(total - 10.5) * 0.05)
-        elif total <= 11:
-            return np.mean(list(probs.values()))
-        else:
-            high = np.mean([probs.get(d, 0) for d in [4, 5, 6]])
-            return high * (1 + abs(total - 10.5) * 0.05)
+        """Exact probability of total sum from digit probs via 3-fold convolution."""
+        from machine_learning.bingo18.dice_probs import compute_total_probs
+
+        total_probs = compute_total_probs(probs)
+        return total_probs.get(total, 0.0)
 
     def _estimate_category_probs(self, probs: dict[int, float]) -> dict[str, float]:
-        """Estimate category probabilities from digit probs."""
-        low_prob = np.mean([probs.get(d, 0) for d in [1, 2, 3]])
-        high_prob = np.mean([probs.get(d, 0) for d in [4, 5, 6]])
-        p_small_raw = low_prob
-        p_big_raw = high_prob
-        p_draw_raw = (low_prob + high_prob) / 2
-        total = p_small_raw + p_draw_raw + p_big_raw
-        if total > 0:
-            p_small = p_small_raw / total
-            p_draw = p_draw_raw / total
-            p_big = p_big_raw / total
-        else:
-            p_small, p_draw, p_big = 1 / 3, 1 / 3, 1 / 3
-        return {"Nhỏ": p_small, "Hòa": p_draw, "Lớn": p_big}
+        """Exact Nho/Hoa/Lon probabilities from digit probs via 3-fold convolution."""
+        from machine_learning.bingo18.dice_probs import compute_category_probs
+
+        return compute_category_probs(probs)
 
     def _estimate_pair_prob(self, probs: dict[int, float]) -> float:
         """Estimate probability of at least 2 same digits."""

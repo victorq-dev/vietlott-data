@@ -280,6 +280,55 @@ def _run_auto_tune(df, bet_size, save_best, save_dir, top_k, output, combined_co
 
 
 @cli.command()
+@click.option("--budget", type=int, default=500_000, help="Training budget in VND")
+@click.option("--bet-size", type=int, default=10_000, help="Bet per ticket in VND")
+@click.option("--epochs", type=int, default=10, help="Number of training epochs")
+@click.option("--data-path", type=click.Path(exists=True), default=None, help="Path to bingo18.jsonl")
+@click.option("--output", type=click.Path(), default="models/strategy_model.pkl", help="Output model path")
+def train_strategy(budget: int, bet_size: int, epochs: int, data_path: str | None, output: str):
+    """Train a strategy model on historical data."""
+    from machine_learning.bingo18.strategy_model import StrategyModel
+    from machine_learning.bingo18.strategy_trainer import StrategyTrainer
+
+    data_path_obj = Path(data_path) if data_path else DEFAULT_DATA_PATH
+    df = load_data(data_path_obj)
+
+    logger.info("Training Stage 1 model for feature extraction...")
+    model = Bingo18Model()
+    metrics = model.train(df)
+    logger.info(f"Stage 1 model trained: {metrics.summary()}")
+
+    logger.info(f"Training strategy model for {epochs} epochs...")
+    strategy_model = StrategyModel(
+        context_dim=model.feature_engineer.n_features + 6 + 3 + 10 + 1,
+    )
+    trainer = StrategyTrainer(
+        model=model,
+        strategy_model=strategy_model,
+        budget=budget,
+        bet_size=bet_size,
+    )
+    results = trainer.train(df, n_epochs=epochs)
+
+    # Print results
+    test = results["test"]
+    click.echo(f"\n{'=' * 60}")
+    click.echo(f"  STRATEGY MODEL TRAINING RESULTS")
+    click.echo(f"{'=' * 60}")
+    click.echo(f"  Train experiences: {results['n_train_experiences']:,}")
+    click.echo(f"  Test win rate:     {test['win_rate']:.1%}")
+    click.echo(f"  Test ROI:          {test['roi']:.1f}%")
+    click.echo(f"  Test final budget: {test['final_budget']:,.0f} VND")
+    click.echo(f"  Test total bets:   {test['total_bets']:,}")
+    click.echo(f"{'=' * 60}")
+
+    # Save model
+    output_path = Path(output)
+    strategy_model.save(output_path)
+    click.echo(f"\nModel saved to {output_path}")
+
+
+@cli.command()
 @click.option("--budget", type=int, default=10_000_000, help="Starting budget per agent in VND")
 @click.option("--bet-size", type=int, default=10_000, help="Bet per ticket in VND")
 @click.option("--n-agents", type=int, default=12, help="Number of agents in the race")
@@ -287,6 +336,7 @@ def _run_auto_tune(df, bet_size, save_best, save_dir, top_k, output, combined_co
 @click.option("--share-knowledge", is_flag=True, help="Enable knowledge sharing between agents")
 @click.option("--data-path", type=click.Path(exists=True), default=None, help="Path to bingo18.jsonl")
 @click.option("--output", type=click.Path(), default=None, help="Output dir (with --visualize) or report file path")
+@click.option("--strategy-model", type=click.Path(exists=True), default=None, help="Path to trained strategy model")
 @click.option("--top-k", type=int, default=10, help="Number of top agents to show")
 @click.option("--visualize", is_flag=True, help="Generate visualization charts")
 @click.option("--verbose", "-v", is_flag=True, help="Show per-agent bet details (DEBUG logs)")
@@ -298,6 +348,7 @@ def race(
     share_knowledge: bool,
     data_path: str | None,
     output: str | None,
+    strategy_model: str | None,
     top_k: int,
     visualize: bool,
     verbose: bool,
@@ -339,6 +390,17 @@ def race(
     metrics = model.train(df)
     logger.info(f"Model trained: {metrics.summary()}")
 
+    # Load strategy model if provided
+    loaded_strategy_model = None
+    if strategy_model:
+        from machine_learning.bingo18.strategy_model import StrategyModel
+
+        loaded_strategy_model = StrategyModel(
+            context_dim=len(model.feature_engineer._feature_names()) + 6 + 3 + 10 + 1,
+        )
+        loaded_strategy_model.load(Path(strategy_model))
+        logger.info(f"Strategy model loaded from {strategy_model}")
+
     # Create diverse agents
     logger.info(f"Creating {n_agents} diverse agents (budget={budget:,}, bet_size={bet_size:,})...")
     agents = create_diverse_agents(
@@ -348,6 +410,13 @@ def race(
         n_agents=n_agents,
         adaptation_interval=adaptation_interval,
     )
+
+    # Inject strategy model into first half of agents (if loaded)
+    if loaded_strategy_model is not None:
+        for i, agent in enumerate(agents):
+            if i < len(agents) // 2:
+                agent._strategy_model = loaded_strategy_model
+                logger.info(f"Agent {agent.agent_id} using strategy model")
 
     # Run race
     logger.info(
@@ -517,6 +586,238 @@ def _format_report_text(result, top_k: int) -> str:
         )
 
     return "\n".join(lines)
+
+
+@cli.command()
+@click.option("--epochs", type=int, default=10, help="Number of training epochs")
+@click.option("--budget", type=int, default=500_000, help="Starting budget per agent in VND")
+@click.option("--data-path", type=click.Path(exists=True), default=None, help="Path to bingo18.jsonl")
+@click.option("--output", type=click.Path(), default=None, help="Path to save trained strategy model")
+def train_strategy(epochs: int, budget: int, data_path: str | None, output: str | None):
+    """Train a strategy model via simulation on historical data.
+
+    The strategy model learns WHEN to use WHICH bet type in different
+    situations, optimizing for net profit/ROI.
+
+    Examples:
+
+        # Train with default settings
+        vietlott-bingo18 train-strategy
+
+        # Train for 20 epochs with custom budget
+        vietlott-bingo18 train-strategy --epochs 20 --budget 1000000
+
+        # Save trained model
+        vietlott-bingo18 train-strategy --output models/strategy_v1.joblib
+    """
+    from machine_learning.bingo18.strategy_model import N_BET_TYPES, StrategyModel
+    from machine_learning.bingo18.strategy_trainer import StrategyTrainer
+
+    # Load data
+    data_path_obj = Path(data_path) if data_path else DEFAULT_DATA_PATH
+    df = load_data(data_path_obj)
+
+    # Train Stage 1 model
+    logger.info("Training Stage 1 model (digit prediction)...")
+    model = Bingo18Model()
+    metrics = model.train(df)
+    logger.info(f"Stage 1 model trained: {metrics.summary()}")
+
+    # Create strategy model
+    context_dim = len(model.feature_engineer._feature_names()) + 6 + 3 + N_BET_TYPES + 1
+    strategy_model = StrategyModel(context_dim=context_dim)
+
+    # Train strategy model
+    logger.info(f"Training strategy model for {epochs} epochs...")
+    trainer = StrategyTrainer(
+        model=model,
+        strategy_model=strategy_model,
+        budget=budget,
+    )
+    results = trainer.train(df, n_epochs=epochs)
+
+    # Print results
+    test = results["test"]
+    click.echo(f"\n{'=' * 60}")
+    click.echo("  STRATEGY MODEL TRAINING RESULTS")
+    click.echo(f"{'=' * 60}")
+    click.echo(f"  Train experiences: {results['n_train_experiences']:,}")
+    click.echo(f"  Test win rate:     {test['win_rate']:.1%}")
+    click.echo(f"  Test ROI:          {test['roi']:+.2f}%")
+    click.echo(f"  Test final budget: {test['final_budget']:,.0f} VND")
+    click.echo(f"  Test total bets:   {test['total_bets']:,}")
+    click.echo(f"{'=' * 60}")
+
+    # Save model
+    if output:
+        output_path = Path(output)
+    else:
+        output_path = Path("models/strategy_model.joblib")
+    strategy_model.save(output_path)
+    click.echo(f"\nStrategy model saved to {output_path}")
+
+
+@cli.command()
+@click.option("--budget", type=int, default=10_000_000, help="Starting budget per agent in VND")
+@click.option("--bet-size", type=int, default=10_000, help="Bet per ticket in VND")
+@click.option("--n-agents", type=int, default=6, help="Number of agents in the race")
+@click.option("--data-path", type=click.Path(exists=True), default=None, help="Path to bingo18.jsonl")
+@click.option("--strategy-model", type=click.Path(exists=True), default=None, help="Path to trained strategy model")
+def race_with_strategy(budget: int, bet_size: int, n_agents: int, data_path: str | None, strategy_model: str | None):
+    """Race strategy agents against heuristic agents.
+
+    Creates a mix of strategy-learning agents and heuristic agents,
+    then runs them through historical data to compare performance.
+
+    Examples:
+
+        # Race with default strategy model
+        vietlott-bingo18 race-with-strategy
+
+        # Race with custom strategy model
+        vietlott-bingo18 race-with-strategy --strategy-model models/strategy_v1.joblib
+    """
+    from machine_learning.bingo18.agent import create_diverse_agents
+    from machine_learning.bingo18.race import RaceCoordinator
+    from machine_learning.bingo18.strategy_model import N_BET_TYPES, StrategyModel
+
+    # Load data
+    data_path_obj = Path(data_path) if data_path else DEFAULT_DATA_PATH
+    df = load_data(data_path_obj)
+
+    # Train Stage 1 model
+    logger.info("Training Stage 1 model...")
+    model = Bingo18Model()
+    model.train(df)
+
+    # Load or create strategy model
+    if strategy_model:
+        sm = StrategyModel()
+        sm.load(Path(strategy_model))
+        logger.info(f"Loaded strategy model from {strategy_model}")
+    else:
+        # Create untrained strategy model (will use uniform distribution)
+        context_dim = len(model.feature_engineer._feature_names()) + 6 + 3 + N_BET_TYPES + 1
+        sm = StrategyModel(context_dim=context_dim)
+        logger.info("No strategy model provided, using untrained model")
+
+    # Create agents: half with strategy model, half heuristic
+    n_strategy = n_agents // 2
+    n_heuristic = n_agents - n_strategy
+
+    from machine_learning.bingo18.agent import AdaptiveAgent, AgentGenome
+
+    agents: list[AdaptiveAgent] = []
+    for i in range(n_strategy):
+        genome = AgentGenome(max_bets_per_draw=3, multi_bet_budget_share=0.06)
+        agent = AdaptiveAgent(
+            agent_id=f"strategy_{i:03d}",
+            genome=genome,
+            model=model,
+            budget=budget,
+            bet_size=bet_size,
+            strategy_model=sm,
+        )
+        agents.append(agent)
+
+    heuristic_agents = create_diverse_agents(
+        model=model,
+        budget=budget,
+        bet_size=bet_size,
+        n_agents=n_heuristic,
+    )
+    agents.extend(heuristic_agents)
+
+    # Run race
+    logger.info(f"Starting race: {n_strategy} strategy + {n_heuristic} heuristic agents")
+    coordinator = RaceCoordinator(
+        agents=agents,
+        adaptation_interval=50,
+    )
+    result = coordinator.run_race(df)
+
+    # Print results
+    click.echo(f"\n{'=' * 80}")
+    click.echo("  RACE RESULTS: Strategy vs Heuristic")
+    click.echo(f"{'=' * 80}")
+
+    all_agents = sorted(result.agents, key=lambda a: a.roi, reverse=True)
+    for rank, agent in enumerate(all_agents, 1):
+        prefix = "[S]" if agent.agent_id.startswith("strategy") else "[H]"
+        roi_str = f"{agent.roi:+.2f}%"
+        wr_str = f"{agent.win_rate:.1%}"
+        click.echo(
+            f"  {rank:>3}. {prefix} {agent.agent_id:<15} "
+            f"ROI={roi_str:>12} WinRate={wr_str:>8} "
+            f"Budget={agent.final_budget:>15,}"
+        )
+
+    click.echo(f"{'=' * 80}")
+
+
+@cli.command()
+@click.option("--n-agents", type=int, default=5, help="Number of parallel training agents")
+@click.option("--epochs", type=int, default=10, help="Training epochs per agent")
+@click.option("--budget", type=int, default=500_000, help="Starting budget per agent")
+@click.option("--output", type=click.Path(), default="/tmp/bingo18_parallel", help="Output directory for models")
+@click.option("--data-path", type=click.Path(exists=True), default=None, help="Path to bingo18.jsonl")
+def train_parallel(n_agents: int, epochs: int, budget: int, output: str, data_path: str | None):
+    """Train multiple strategy models in parallel and select the best.
+
+    Runs N training agents with different hyperparameters, monitors their
+    performance, and saves the best model.
+
+    Examples:
+
+        # Train 5 agents in parallel
+        vietlott-bingo18 train-parallel
+
+        # Train 10 agents for 20 epochs each
+        vietlott-bingo18 train-parallel --n-agents 10 --epochs 20
+    """
+    from machine_learning.bingo18.parallel_trainer import create_default_configs, run_parallel_training
+
+    # Load data
+    data_path_obj = Path(data_path) if data_path else DEFAULT_DATA_PATH
+    df = load_data(data_path_obj)
+
+    # Train Stage 1 model
+    logger.info("Training Stage 1 model (digit prediction)...")
+    model = Bingo18Model()
+    metrics = model.train(df)
+    logger.info(f"Stage 1 model trained: {metrics.summary()}")
+
+    # Create configs
+    configs = create_default_configs()[:n_agents]
+    for config in configs:
+        object.__setattr__(config, 'n_epochs', epochs)
+        object.__setattr__(config, 'budget', budget)
+
+    # Run parallel training
+    result = run_parallel_training(
+        df=df,
+        model=model,
+        configs=configs,
+        output_dir=output,
+    )
+
+    # Print results table
+    click.echo(f"\n{'=' * 80}")
+    click.echo("  PARALLEL TRAINING RESULTS")
+    click.echo(f"{'=' * 80}")
+    click.echo(f"  {'Agent':<30} {'ROI':>10} {'WinRate':>10} {'Budget':>15} {'Bets':>8} {'Time':>8}")
+    click.echo(f"  {'-'*30} {'-'*10} {'-'*10} {'-'*15} {'-'*8} {'-'*8}")
+
+    for r in sorted(result.all_results, key=lambda x: x.test_roi, reverse=True):
+        click.echo(
+            f"  {r.config.name:<30} {r.test_roi:>9.1f}% {r.test_win_rate:>9.1%} "
+            f"{r.test_final_budget:>15,} {r.test_total_bets:>8} {r.elapsed_seconds:>7.1f}s"
+        )
+
+    click.echo(f"\n  BEST: {result.best.config.name}")
+    click.echo(f"  Model saved: {result.best.model_path}")
+    click.echo(f"  Total time: {result.total_elapsed:.1f}s")
+    click.echo(f"{'=' * 80}")
 
 
 if __name__ == "__main__":

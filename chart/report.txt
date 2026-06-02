@@ -1,0 +1,28 @@
+Bingo18 Multi-Agent Race Report
+==================================================
+Budget: 500,000 VND per agent
+Bet Size: 10,000 VND
+Total Draws: 73287
+Adaptation Interval: 50
+Agents: 6/6
+Elapsed: 9.4s
+
+Leaderboard:
+----------------------------------------------------------------------------------------------------
+Rank  Agent        Risk          Strategy            Budget        ROI    WinRate     Drawdown  Adapt
+----------------------------------------------------------------------------------------------------
+1     agent_000    conservative  top_n                4,242     -99.15%       0.0%      495,758      0
+2     agent_001    moderate      threshold            2,312     -99.54%      12.7%      512,688      1
+3     agent_003    conservative  threshold            2,000     -99.60%       3.8%      498,000      1
+4     agent_005    aggressive    threshold            2,000     -99.60%       2.0%      498,000      1
+5     agent_002    aggressive    top_n                    0    -100.00%       0.0%      500,000      1
+6     agent_004    moderate      top_n                    0    -100.00%       1.9%      500,000      1
+
+Winner:
+  Agent: agent_000
+  Risk Profile: conservative
+  Strategy: top_n
+  ROI: -99.15%
+  Final Budget: 4,242 VND
+  Win Rate: 0.0%
+  Adaptations: 0
