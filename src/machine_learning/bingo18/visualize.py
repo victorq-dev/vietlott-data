@@ -31,8 +31,6 @@ COLORS_BET_TYPE = {
     "ba_so_trung": "#e74c3c",
     "cong_tong": "#f39c12",
     "lon_hoa_nho": "#9b59b6",
-
-
 }
 DEFAULT_DPI = 150
 FIG_SIZE_DEFAULT = (12, 8)
@@ -700,18 +698,37 @@ def export_agent_decisions_csv(
         csv_path = output_dir / f"{agent_id}_decisions.csv"
         with csv_path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow([
-                "draw_id", "date", "bet_type", "bet_value",
-                "actual_digits", "actual_total", "matches",
-                "bet_amount", "payout", "profit", "budget_after",
-            ])
+            writer.writerow(
+                [
+                    "draw_id",
+                    "date",
+                    "bet_type",
+                    "bet_value",
+                    "actual_digits",
+                    "actual_total",
+                    "matches",
+                    "bet_amount",
+                    "payout",
+                    "profit",
+                    "budget_after",
+                ]
+            )
             for bet in bet_history:
-                writer.writerow([
-                    bet.draw_id, bet.date, bet.bet_type, bet.bet_value,
-                    bet.actual_digits, bet.actual_total, bet.matches,
-                    bet.bet_amount, bet.payout, bet.payout - bet.bet_amount,
-                    bet.budget_after,
-                ])
+                writer.writerow(
+                    [
+                        bet.draw_id,
+                        bet.date,
+                        bet.bet_type,
+                        bet.bet_value,
+                        bet.actual_digits,
+                        bet.actual_total,
+                        bet.matches,
+                        bet.bet_amount,
+                        bet.payout,
+                        bet.payout - bet.bet_amount,
+                        bet.budget_after,
+                    ]
+                )
         saved.append(csv_path)
         logger.info(f"Saved {csv_path} ({len(bet_history)} decisions)")
 

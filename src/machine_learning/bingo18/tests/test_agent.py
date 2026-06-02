@@ -490,7 +490,9 @@ class TestRecordResult:
 class TestIncrementDrawCounter:
     def test_counter_starts_at_zero(self, mock_model):
         genome = AgentGenome()
-        agent = AdaptiveAgent(agent_id="test_dc1", genome=genome, model=mock_model, budget=1_000_000, adaptation_interval=50)
+        agent = AdaptiveAgent(
+            agent_id="test_dc1", genome=genome, model=mock_model, budget=1_000_000, adaptation_interval=50
+        )
         assert agent._draws_since_adaptation == 0
 
     def test_increment_adds_one(self, mock_model):
@@ -511,8 +513,13 @@ class TestIncrementDrawCounter:
         agent = AdaptiveAgent(agent_id="test_dc4", genome=genome, model=mock_model, budget=1_000_000)
         for _ in range(3):
             agent.record_result(
-                bet_type=BetType.MOT_SO, bet_value=3, bet_amount=10_000,
-                actual_digits=[1, 2, 4], actual_total=7, date="2025-01-01", draw_id="001",
+                bet_type=BetType.MOT_SO,
+                bet_value=3,
+                bet_amount=10_000,
+                actual_digits=[1, 2, 4],
+                actual_total=7,
+                date="2025-01-01",
+                draw_id="001",
             )
         assert agent._draws_since_adaptation == 0
 

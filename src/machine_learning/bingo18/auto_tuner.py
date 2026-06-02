@@ -25,7 +25,6 @@ DEFAULT_BET_TYPES = [
     "ba_so_trung",
     "cong_tong",
     "lon_hoa_nho",
-
 ]
 DEFAULT_STRATEGIES = ["top_n", "threshold"]
 DEFAULT_THRESHOLDS = [0.12, 0.15]
