@@ -309,7 +309,7 @@ class SurvivalAgent:
 
     def reset_budget(self) -> None:
         """Reset budget to starting value — keeps all learned absence/stats."""
-        logger.info(f"[{self.agent_id}] Budget reset: {self.budget:,} → {self._starting_budget:,}")
+        logger.debug(f"[{self.agent_id}] Budget reset: {self.budget:,} → {self._starting_budget:,}")
         self.budget = self._starting_budget
         self._profit_curve.append(self.budget)
         self._max_budget = self.budget
