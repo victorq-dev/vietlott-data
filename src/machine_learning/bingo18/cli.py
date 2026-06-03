@@ -1382,9 +1382,7 @@ def train_survival(
     infinite = rounds == 0
     rounds_label = "∞" if infinite else str(rounds)
     click.echo(f"\n{'=' * 80}")
-    click.echo(
-        f"  SURVIVAL TRAINING  {n_agents} agents × {rounds_label} rounds  ({n_draws:,} draws/round)"
-    )
+    click.echo(f"  SURVIVAL TRAINING  {n_agents} agents × {rounds_label} rounds  ({n_draws:,} draws/round)")
     click.echo(f"  bet_size={bet_size:,}  max_units/draw={max_units_draw}  min_ratio={min_ratio}")
     if watch:
         click.echo(f"  Watching top {watch} agent(s) realtime  (Ctrl+C to stop)")
@@ -1412,8 +1410,9 @@ def train_survival(
         except Exception:
             return ""
 
-    def _print_decision(agent: SurvivalAgent, digits: list, total: int,
-                        ls: str, draw_id: str, outcomes: list[dict]) -> None:
+    def _print_decision(
+        agent: SurvivalAgent, digits: list, total: int, ls: str, draw_id: str, outcomes: list[dict]
+    ) -> None:
         if not outcomes:
             return
         net = sum(o["payout"] - o["amount"] for o in outcomes)
@@ -1453,14 +1452,16 @@ def train_survival(
                         agent.reset_budget()
                         just_reset = True
 
-                    outcomes = agent.process_draw(
-                        results_list[i], totals[i], large_smalls[i], dates[i], ids[i]
-                    )
+                    outcomes = agent.process_draw(results_list[i], totals[i], large_smalls[i], dates[i], ids[i])
 
                     if agent.agent_id in watched and outcomes and not just_reset:
                         _print_decision(
-                            agent, results_list[i], totals[i],
-                            large_smalls[i], ids[i], outcomes,
+                            agent,
+                            results_list[i],
+                            totals[i],
+                            large_smalls[i],
+                            ids[i],
+                            outcomes,
                         )
 
             # Save after each round
@@ -1649,6 +1650,181 @@ def survival_stats(agent_dir: str, detail: bool, top_options: int) -> None:
             click.echo(f"    {'Option':<30} {'Absence':>8} {'Draws':>7} {'ExpGap':>8} {'ROI':>8} {'Bets':>6}")
             for key_str, ratio, dsw, eg, opt_roi, bets in r["option_rows"][:top_options]:
                 click.echo(f"    {key_str:<30} {ratio:>8.2f}× {dsw:>7} {eg:>8.1f} {opt_roi:>+7.1f}% {bets:>6,}")
+
+
+@cli.command()
+@click.option(
+    "--agent-dir",
+    type=click.Path(),
+    default="models/bingo18/survival",
+    help="Directory with saved survival agent state",
+)
+@click.option("--agent", "agent_id", type=str, default=None, help="Agent ID to use (default: best by lifetime ROI)")
+@click.option("--poll-secs", type=int, default=370, help="Poll interval in seconds (default: 370 ≈ 6 min)")
+@click.option("--dry-run", is_flag=True, help="Do not save agent state after each draw")
+def live_play(agent_dir: str, agent_id: str | None, poll_secs: int, dry_run: bool) -> None:
+    """Run best survival agent against live Bingo18 draws in real-time.
+
+    Polls the Vietlott API every ~6 minutes for new draws and processes
+    them through the agent. Agent state (absence counters) is saved after
+    each draw so the session can be resumed later.
+
+    Examples:
+
+        # Use best agent automatically
+        vietlott-bingo18 live-play
+
+        # Use specific agent, poll every 7 minutes
+        vietlott-bingo18 live-play --agent survival_092 --poll-secs 420
+
+        # Watch without saving state
+        vietlott-bingo18 live-play --dry-run
+    """
+    import json as _json
+    import time as _time
+
+    import cattrs
+    import pendulum
+    import requests as _requests
+    from bs4 import BeautifulSoup
+
+    from machine_learning.bingo18.survival_agent import SurvivalAgent
+    from vietlott.crawler.products.bingo18 import ProductBingo18
+    from vietlott.crawler.requests_helper.fetch import get_vietlott_cookie
+    from vietlott.crawler.schema.requests import RequestBingo18
+
+    state_dir = Path(agent_dir)
+
+    # --- Pick agent ---
+    if agent_id:
+        filepath = state_dir / f"{agent_id}.json"
+        if not filepath.exists():
+            click.echo(f"Agent file not found: {filepath}")
+            return
+    else:
+        files = sorted(state_dir.glob("survival_*.json"))
+        if not files:
+            click.echo(f"No survival agents found in {state_dir}")
+            return
+        best_file, best_roi = None, float("-inf")
+        for f in files:
+            try:
+                d = _json.loads(f.read_text())
+                s = d["state"]
+                opt = s.get("option_states", {})
+                wagered = sum(v["total_wagered"] for v in opt.values())
+                payout = sum(v["total_payout"] for v in opt.values())
+                roi = (payout - wagered) / wagered * 100 if wagered else 0
+                if roi > best_roi:
+                    best_roi, best_file = roi, f
+            except Exception:
+                pass
+        filepath = best_file
+
+    agent = SurvivalAgent.load(filepath)
+
+    click.echo(f"\n{'=' * 70}")
+    click.echo(f"  LIVE PLAY  [{agent.agent_id}]")
+    click.echo(f"  min_ratio={agent.min_absence_ratio:.2f}  bet_size={agent.bet_size:,}  budget={agent.budget:,}")
+    click.echo(f"  lifetime_roi={agent.lifetime_roi:+.1f}%  poll_interval={poll_secs}s (~{poll_secs // 60}min)")
+    if dry_run:
+        click.echo("  [DRY RUN — state not saved]")
+    click.echo(f"{'=' * 70}")
+    click.echo("  Waiting for new draws... (Ctrl+C to stop)\n")
+
+    # --- Fetch helpers ---
+    _url = ProductBingo18.url
+    _dummy = ProductBingo18()  # initializes headers + cookies once
+
+    def _fetch_latest(n: int = 3) -> list[dict]:
+        """Fetch the N most recent Bingo18 draws from the API."""
+        body = cattrs.unstructure(
+            RequestBingo18(
+                ORenderInfo=ProductBingo18.orender_info_default,
+                GameId="8",
+                PageIndex=1,
+                TotalRow=n,
+            )
+        )
+        try:
+            res = _requests.post(
+                _url,
+                data=_json.dumps(body),
+                headers=_dummy.headers,
+                cookies=_dummy.cookies,
+                timeout=10,
+            )
+            if not res.ok:
+                logger.warning(f"API error {res.status_code}")
+                return []
+            return _dummy.process_result({}, body, res.json(), {})
+        except Exception as e:
+            logger.warning(f"Fetch error: {e}")
+            return []
+
+    # --- Main loop ---
+    seen_ids: set[str] = set()
+    total_processed = 0
+
+    try:
+        while True:
+            draws = _fetch_latest(n=3)
+
+            for draw in draws:
+                draw_id = draw.get("id", "")
+                if not draw_id or draw_id in seen_ids:
+                    continue
+                seen_ids.add(draw_id)
+
+                digits = list(draw["result"])
+                total = draw["total"]
+                ls = draw["large_small"]
+                date = draw.get("date", "")
+
+                outcomes = agent.process_draw(digits, total, ls, date, draw_id)
+                total_processed += 1
+
+                # Display
+                ts = pendulum.now().format("HH:mm:ss")
+                if outcomes:
+                    net = sum(o["payout"] - o["amount"] for o in outcomes)
+                    parts = []
+                    for o in outcomes:
+                        bt = o["bet_type"]
+                        state = agent._states.get(
+                            (
+                                BetType(bt),
+                                o["value"]
+                                if bt == "lon_hoa_nho"
+                                else (o["value"] if bt == "ba_so_trung_any" else int(o["value"])),
+                            )
+                        )
+                        absence = f"{state.draws_since_win}↑" if state else ""
+                        parts.append(f"{bt}:{o['value']}×{o['units']}u({absence}){'✓' if o['won'] else '✗'}")
+                    click.echo(
+                        f"  {ts} #{draw_id} [{','.join(map(str, digits))}] s={total} {ls:<3} | "
+                        f"{' '.join(parts)} | net:{net:>+8,} budget:{agent.budget:>10,} roi:{agent.lifetime_roi:>+.1f}%"
+                    )
+                else:
+                    click.echo(
+                        f"  {ts} #{draw_id} [{','.join(map(str, digits))}] s={total} {ls:<3} | "
+                        f"[skip — nothing overdue] | budget:{agent.budget:>10,}"
+                    )
+
+                if not dry_run:
+                    agent.save(state_dir)
+
+            next_poll = pendulum.now().add(seconds=poll_secs).format("HH:mm:ss")
+            click.echo(f"  ... next poll at {next_poll} (+{poll_secs}s)", nl=False)
+            click.echo("\r", nl=False)
+            _time.sleep(poll_secs)
+
+    except KeyboardInterrupt:
+        click.echo(f"\n\n  Stopped. Draws processed this session: {total_processed}")
+        if not dry_run:
+            agent.save(state_dir)
+            click.echo(f"  State saved → {state_dir / agent.agent_id}.json")
+        click.echo(f"  Final: budget={agent.budget:,}  lifetime_roi={agent.lifetime_roi:+.1f}%")
 
 
 if __name__ == "__main__":
