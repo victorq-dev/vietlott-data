@@ -56,6 +56,8 @@ def _expected_gap(bet_type: BetType, value: Any) -> float:
         return 216 / 16  # P(digit appears ≥2 times) = 16/216
     if bet_type == BetType.BA_SO_TRUNG:
         return 216.0  # P(digit appears 3 times) = 1/216
+    if bet_type == BetType.BA_SO_TRUNG_ANY:
+        return 36.0  # P(any triple) = 6/216 = 1/36
     if bet_type == BetType.CONG_TONG:
         ways = _CONG_TONG_WAYS.get(int(value), 1)
         return 216 / ways
@@ -72,6 +74,7 @@ def _all_bet_options() -> list[tuple[BetType, Any]]:
         opts.append((BetType.MOT_SO, d))
         opts.append((BetType.HAI_SO_TRUNG, d))
         opts.append((BetType.BA_SO_TRUNG, d))
+    opts.append((BetType.BA_SO_TRUNG_ANY, "any"))
     for t in range(3, 19):
         opts.append((BetType.CONG_TONG, t))
     for cat in ["Nhỏ", "Hòa", "Lớn"]:
@@ -301,6 +304,8 @@ class SurvivalAgent:
             return digits.count(val) >= 2
         if bt == BetType.BA_SO_TRUNG:
             return digits.count(val) == 3
+        if bt == BetType.BA_SO_TRUNG_ANY:
+            return len(set(digits)) == 1
         if bt == BetType.CONG_TONG:
             return total == val
         if bt == BetType.LON_HOA_NHO:
@@ -399,6 +404,8 @@ class SurvivalAgent:
             val: Any
             if bt in (BetType.MOT_SO, BetType.HAI_SO_TRUNG, BetType.BA_SO_TRUNG, BetType.CONG_TONG):
                 val = int(val_str)
+            elif bt == BetType.BA_SO_TRUNG_ANY:
+                val = val_str  # "any" — keep as string
             else:
                 val = val_str
             key = (bt, val)

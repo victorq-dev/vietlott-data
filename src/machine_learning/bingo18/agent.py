@@ -34,6 +34,7 @@ DEFAULT_BET_TYPE_WEIGHTS: dict[str, float] = {
     "mot_so": 1.0,
     "hai_so_trung": 1.0,
     "ba_so_trung": 1.0,
+    "ba_so_trung_any": 1.0,
     "cong_tong": 1.0,
     "lon_hoa_nho": 1.0,
 }
@@ -344,6 +345,12 @@ class AdaptiveAgent:
                     ev = self._ev_digit(bt, d, p)
                     scored.append((ev, bt, d))
 
+            elif bt == BetType.BA_SO_TRUNG_ANY:
+                # P(any triple) = sum of p^3 across all digits
+                p_any_triple = sum(p**3 for p in predictions.values())
+                ev = p_any_triple * 200_000 / 10_000 - 1.0
+                scored.append((ev, bt, "any"))
+
             elif bt == BetType.CONG_TONG:
                 for t in range(3, 19):
                     p = self._estimate_total_prob(predictions, t)
@@ -514,6 +521,9 @@ class AdaptiveAgent:
 
     def _select_bet_value(self, bet_type: BetType, predictions: dict[int, float]) -> Any:
         """Select the best bet value for a given bet type using predictions."""
+        if bet_type == BetType.BA_SO_TRUNG_ANY:
+            return "any"  # No specific digit needed
+
         digit_types = (
             BetType.MOT_SO,
             BetType.HAI_SO_TRUNG,

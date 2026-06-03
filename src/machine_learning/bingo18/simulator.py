@@ -35,6 +35,7 @@ class BetType(str, Enum):
     MOT_SO = "mot_so"  # Pick 1 number
     HAI_SO_TRUNG = "hai_so_trung"  # Pick number, win if appears 2+ times
     BA_SO_TRUNG = "ba_so_trung"  # Pick number, win if appears 3 times
+    BA_SO_TRUNG_ANY = "ba_so_trung_any"  # Any triple (no number picked), x20
     CONG_TONG = "cong_tong"  # Pick total sum
     LON_HOA_NHO = "lon_hoa_nho"  # Pick Big/Draw/Small
 
@@ -183,6 +184,13 @@ def calculate_payout(bet_type: BetType, bet_value: Any, actual_digits: list[int]
             payout = int(BA_SO_TRUNG_PRIZE * (bet_size / 10_000))
             return count, payout
         return count, 0
+
+    elif bet_type == BetType.BA_SO_TRUNG_ANY:
+        # Bet on any triple (all 3 digits the same), no specific number picked
+        if len(set(actual_digits)) == 1:
+            payout = int(BA_SO_TRUNG_ANY_PRIZE * (bet_size / 10_000))
+            return 1, payout
+        return 0, 0
 
     elif bet_type == BetType.CONG_TONG:
         # Bet on total sum

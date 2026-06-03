@@ -99,6 +99,37 @@ def test_ba_so_trung_not_exact():
     assert payout == 0
 
 
+# --- ba_so_trung_any ---
+
+
+def test_ba_so_trung_any_hit_any_digit():
+    """Any triple wins regardless of which digit."""
+    for d in range(1, 7):
+        matches, payout = calculate_payout(BetType.BA_SO_TRUNG_ANY, "any", [d, d, d], 10_000)
+        assert matches == 1
+        assert payout == 200_000
+
+
+def test_ba_so_trung_any_miss():
+    matches, payout = calculate_payout(BetType.BA_SO_TRUNG_ANY, "any", [1, 2, 3], 10_000)
+    assert matches == 0
+    assert payout == 0
+
+
+def test_ba_so_trung_any_miss_pair():
+    """Two matching is not enough."""
+    matches, payout = calculate_payout(BetType.BA_SO_TRUNG_ANY, "any", [3, 3, 5], 10_000)
+    assert matches == 0
+    assert payout == 0
+
+
+def test_ba_so_trung_any_scales_with_bet_size():
+    """Payout scales proportionally with bet size."""
+    _, p1 = calculate_payout(BetType.BA_SO_TRUNG_ANY, "any", [2, 2, 2], 10_000)
+    _, p2 = calculate_payout(BetType.BA_SO_TRUNG_ANY, "any", [2, 2, 2], 20_000)
+    assert p2 == p1 * 2
+
+
 def test_cong_tong_hit():
     matches, payout = calculate_payout(BetType.CONG_TONG, 12, [4, 5, 3], 10_000)
     assert matches == 1

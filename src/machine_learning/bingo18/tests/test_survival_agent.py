@@ -103,8 +103,8 @@ class TestExpectedGap:
 
 class TestAllBetOptions:
     def test_correct_count(self):
-        # 6 mot_so + 6 hai + 6 ba + 16 cong_tong + 3 lon_hoa_nho = 37
-        assert len(ALL_BET_OPTIONS) == 37
+        # 6 mot_so + 6 hai + 6 ba + 1 ba_any + 16 cong_tong + 3 lon_hoa_nho = 38
+        assert len(ALL_BET_OPTIONS) == 38
 
     def test_contains_mot_so_all_digits(self):
         for d in range(1, 7):
@@ -133,7 +133,7 @@ class TestSurvivalAgentInit:
 
     def test_all_options_tracked(self):
         agent = SurvivalAgent("test_01", budget=500_000)
-        assert len(agent._states) == 37
+        assert len(agent._states) == 38
 
     def test_filtered_bet_types(self):
         agent = SurvivalAgent(
@@ -195,6 +195,16 @@ class TestCheckHit:
 
     def test_lon_hoa_nho_hoa_hit(self):
         assert SurvivalAgent._check_hit(BetType.LON_HOA_NHO, "Hòa", [3, 3, 4], 10, "Hòa")
+
+    def test_ba_so_trung_any_hit(self):
+        assert SurvivalAgent._check_hit(BetType.BA_SO_TRUNG_ANY, "any", [4, 4, 4], 12, "Lớn")
+
+    def test_ba_so_trung_any_hit_any_digit(self):
+        for d in range(1, 7):
+            assert SurvivalAgent._check_hit(BetType.BA_SO_TRUNG_ANY, "any", [d, d, d], d * 3, "Nhỏ")
+
+    def test_ba_so_trung_any_miss_pair(self):
+        assert not SurvivalAgent._check_hit(BetType.BA_SO_TRUNG_ANY, "any", [3, 3, 5], 11, "Hòa")
 
 
 # ---------------------------------------------------------------------------

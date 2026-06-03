@@ -23,6 +23,7 @@ DEFAULT_BET_TYPES = [
     "mot_so",
     "hai_so_trung",
     "ba_so_trung",
+    "ba_so_trung_any",
     "cong_tong",
     "lon_hoa_nho",
 ]
