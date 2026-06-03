@@ -377,13 +377,15 @@ class SurvivalAgent:
             data = json.load(f)
 
         saved_types = data.get("available_bet_types", [bt.value for bt in BetType])
-        # Migrate: ensure any new BetType values added after the file was saved are included
         known = {bt.value for bt in BetType}
         available = [BetType(v) for v in saved_types if v in known]
-        saved_set = {BetType(v) for v in saved_types if v in known}
-        for bt in BetType:
-            if bt not in saved_set:
-                available.append(bt)
+        # If agent used all old bet types (not explicitly filtered), add any new types
+        old_types = {bt for bt in BetType if bt != BetType.BA_SO_TRUNG_ANY}
+        saved_set = set(available)
+        if old_types.issubset(saved_set) or not saved_types:
+            for bt in BetType:
+                if bt not in saved_set:
+                    available.append(bt)
         agent = cls(
             agent_id=data["agent_id"],
             budget=data["budget"],
