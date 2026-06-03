@@ -1343,9 +1343,11 @@ def train_survival(
         except ValueError as e:
             raise click.BadParameter(f"Unknown bet type: {e}") from e
 
-    # Build diverse agent configs (vary min_absence_ratio and unit limits)
+    # Build diverse agent configs (vary min_absence_ratio across 1.0–5.0 range)
+    ratio_step = 4.0 / max(n_agents - 1, 1)  # spread evenly regardless of n_agents
+
     def make_agent(idx: int) -> SurvivalAgent:
-        ratio = min_ratio + idx * 0.1
+        ratio = min_ratio + idx * ratio_step
         return SurvivalAgent(
             agent_id=f"survival_{idx:03d}",
             budget=budget,
