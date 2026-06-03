@@ -376,7 +376,14 @@ class SurvivalAgent:
         with filepath.open("r", encoding="utf-8") as f:
             data = json.load(f)
 
-        available = [BetType(v) for v in data.get("available_bet_types", [bt.value for bt in BetType])]
+        saved_types = data.get("available_bet_types", [bt.value for bt in BetType])
+        # Migrate: ensure any new BetType values added after the file was saved are included
+        known = {bt.value for bt in BetType}
+        available = [BetType(v) for v in saved_types if v in known]
+        saved_set = {BetType(v) for v in saved_types if v in known}
+        for bt in BetType:
+            if bt not in saved_set:
+                available.append(bt)
         agent = cls(
             agent_id=data["agent_id"],
             budget=data["budget"],
