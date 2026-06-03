@@ -409,9 +409,10 @@ class AdaptiveAgent:
             weighted_ev = ev * weight
             weighted_scored.append((weighted_ev, bt, bv))
 
-        # Select top-N positive-EV bets
+        # Select top-N bets by weighted EV (lottery is always negative EV;
+        # the EV-based skip gate in decide_bets already decides whether to bet at all)
         max_bets = self.genome.max_bets_per_draw
-        selected = [(ev, bt, bv) for ev, bt, bv in weighted_scored if ev > 0][:max_bets]
+        selected = weighted_scored[:max_bets]
 
         if not selected:
             return []
