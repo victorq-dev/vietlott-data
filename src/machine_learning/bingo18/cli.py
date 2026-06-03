@@ -1265,7 +1265,7 @@ def eval(agent_dir: str, data_path: str | None, top_n: int, agent: str | None):
 
 @cli.command()
 @click.option("--n-agents", type=int, default=5, help="Number of survival agents")
-@click.option("--rounds", type=int, default=3, help="Passes through data per agent")
+@click.option("--rounds", type=int, default=3, help="Passes through data (0 = run forever until Ctrl+C)")
 @click.option("--budget", type=int, default=500_000, help="Starting budget per agent")
 @click.option("--bet-size", type=int, default=10_000, help="VND per unit bet")
 @click.option(
@@ -1286,6 +1286,12 @@ def eval(agent_dir: str, data_path: str | None, top_n: int, agent: str | None):
 )
 @click.option("--data-path", type=click.Path(exists=True), default=None, help="Path to bingo18.jsonl")
 @click.option("--fresh", is_flag=True, help="Ignore saved state, start fresh")
+@click.option(
+    "--watch",
+    type=int,
+    default=0,
+    help="Show realtime decisions for top N agents by lifetime ROI (0 = silent)",
+)
 def train_survival(
     n_agents: int,
     rounds: int,
@@ -1298,6 +1304,7 @@ def train_survival(
     agent_dir: str,
     data_path: str | None,
     fresh: bool,
+    watch: int,
 ) -> None:
     """Train absence-based survival agents on historical Bingo18 data.
 
@@ -1310,15 +1317,16 @@ def train_survival(
         # Default: 5 agents, 3 rounds, all bet types
         vietlott-bingo18 train-survival
 
+        # Run forever until Ctrl+C, watch top 2 agents realtime
+        vietlott-bingo18 train-survival --rounds 0 --watch 2
+
+        # Continue from saved state, watch best agent
+        vietlott-bingo18 train-survival --rounds 0 --watch 1
+
         # Restrict to specific bet types
         vietlott-bingo18 train-survival --bet-types mot_so,lon_hoa_nho
-
-        # More aggressive: bet as soon as 0.8× expected gap
-        vietlott-bingo18 train-survival --min-ratio 0.8 --max-units-draw 8
-
-        # Continue from saved state
-        vietlott-bingo18 train-survival --rounds 5
     """
+    import itertools
     import time as _time
 
     from machine_learning.bingo18.survival_agent import SurvivalAgent
@@ -1344,7 +1352,7 @@ def train_survival(
             raise click.BadParameter(f"Unknown bet type: {e}") from e
 
     # Build diverse agent configs (vary min_absence_ratio across 1.0–5.0 range)
-    ratio_step = 4.0 / max(n_agents - 1, 1)  # spread evenly regardless of n_agents
+    ratio_step = 4.0 / max(n_agents - 1, 1)
 
     def make_agent(idx: int) -> SurvivalAgent:
         ratio = min_ratio + idx * ratio_step
@@ -1371,42 +1379,119 @@ def train_survival(
                 logger.warning(f"Failed to load {filepath.name}: {e}")
         agents.append(make_agent(i))
 
+    infinite = rounds == 0
+    rounds_label = "∞" if infinite else str(rounds)
     click.echo(f"\n{'=' * 80}")
-    click.echo(f"  SURVIVAL TRAINING  {n_agents} agents × {rounds} rounds  ({n_draws:,} draws)")
+    click.echo(
+        f"  SURVIVAL TRAINING  {n_agents} agents × {rounds_label} rounds  ({n_draws:,} draws/round)"
+    )
     click.echo(f"  bet_size={bet_size:,}  max_units/draw={max_units_draw}  min_ratio={min_ratio}")
+    if watch:
+        click.echo(f"  Watching top {watch} agent(s) realtime  (Ctrl+C to stop)")
+    elif infinite:
+        click.echo(f"  Running until Ctrl+C")
     click.echo(f"{'=' * 80}")
 
-    start_time = _time.perf_counter()
+    # ----------------------------------------------------------------
+    # Helpers
+    # ----------------------------------------------------------------
 
-    for round_num in range(rounds):
-        round_start = _time.perf_counter()
-        bankruptcies = {a.agent_id: 0 for a in agents}
+    def _watched_ids() -> set[str]:
+        if watch <= 0:
+            return set()
+        ranked = sorted(agents, key=lambda a: a.lifetime_roi, reverse=True)
+        return {a.agent_id for a in ranked[:watch]}
 
-        for i in range(n_draws):
-            for agent in agents:
-                if not agent.is_alive:
-                    bankruptcies[agent.agent_id] += 1
-                    agent.reset_budget()
-                agent.process_draw(results_list[i], totals[i], large_smalls[i], dates[i], ids[i])
+    def _absence_label(agent: SurvivalAgent, bt_str: str, val_raw) -> str:
+        """Return 'Ndraws↑' label for the absence counter of a bet option."""
+        try:
+            bt = BetType(bt_str)
+            val = val_raw if bt == BetType.LON_HOA_NHO else int(val_raw)
+            state = agent._states.get((bt, val))
+            return f"{state.draws_since_win}↑" if state else ""
+        except Exception:
+            return ""
 
-        # Save all agents after each round
-        for agent in agents:
-            agent.save(state_dir)
-
-        round_elapsed = _time.perf_counter() - round_start
-        click.echo(f"\n  Round {round_num + 1}/{rounds}  ({round_elapsed:.1f}s)")
+    def _print_decision(agent: SurvivalAgent, digits: list, total: int,
+                        ls: str, draw_id: str, outcomes: list[dict]) -> None:
+        if not outcomes:
+            return
+        net = sum(o["payout"] - o["amount"] for o in outcomes)
+        parts = []
+        for o in outcomes:
+            absence = _absence_label(agent, o["bet_type"], o["value"])
+            result = "✓" if o["won"] else "✗"
+            parts.append(f"{o['bet_type']}:{o['value']}×{o['units']}u({absence}){result}")
+        bets_str = "  ".join(parts)
         click.echo(
-            f"  {'Agent':<16} {'Budget':>12} {'SnapshotROI':>12} {'LifetimeROI':>12} "
-            f"{'WinRate':>8} {'Bets':>7} {'Bankrupt':>9}"
+            f"  #{draw_id} [{','.join(map(str, digits))}] s={total} {ls:<3} | "
+            f"[{agent.agent_id}] {bets_str} | "
+            f"net:{net:>+8,} budget:{agent.budget:>10,} roi:{agent.lifetime_roi:>+.1f}%"
         )
-        click.echo(f"  {'-' * 80}")
-        for agent in sorted(agents, key=lambda a: a.lifetime_roi, reverse=True):
+
+    # ----------------------------------------------------------------
+    # Training loop
+    # ----------------------------------------------------------------
+
+    start_time = _time.perf_counter()
+    round_iter = itertools.count(1) if infinite else range(1, rounds + 1)
+
+    try:
+        for round_num in round_iter:
+            round_start = _time.perf_counter()
+            bankruptcies = {a.agent_id: 0 for a in agents}
+            watched = _watched_ids()
+
+            if watch:
+                click.echo(f"\n─── Round {round_num} ─── watching: {', '.join(sorted(watched))}")
+
+            for i in range(n_draws):
+                for agent in agents:
+                    if not agent.is_alive:
+                        bankruptcies[agent.agent_id] += 1
+                        agent.reset_budget()
+
+                    outcomes = agent.process_draw(
+                        results_list[i], totals[i], large_smalls[i], dates[i], ids[i]
+                    )
+
+                    if agent.agent_id in watched and outcomes:
+                        _print_decision(
+                            agent, results_list[i], totals[i],
+                            large_smalls[i], ids[i], outcomes,
+                        )
+
+            # Save after each round
+            for agent in agents:
+                agent.save(state_dir)
+
+            round_elapsed = _time.perf_counter() - round_start
+            click.echo(f"\n  ── Round {round_num} done ({round_elapsed:.1f}s) ──")
             click.echo(
-                f"  {agent.agent_id:<16} {agent.budget:>12,} "
-                f"{agent.roi:>+11.1f}% {agent.lifetime_roi:>+11.1f}% "
-                f"{agent.win_rate:>7.1%} {agent._total_bets:>7,} "
-                f"{bankruptcies[agent.agent_id]:>8}"
+                f"  {'Agent':<16} {'Budget':>12} {'SnapshotROI':>12} {'LifetimeROI':>12} "
+                f"{'WinRate':>8} {'Bets':>7} {'Bankrupt':>9}"
             )
+            click.echo(f"  {'-' * 80}")
+            for agent in sorted(agents, key=lambda a: a.lifetime_roi, reverse=True):
+                click.echo(
+                    f"  {agent.agent_id:<16} {agent.budget:>12,} "
+                    f"{agent.roi:>+11.1f}% {agent.lifetime_roi:>+11.1f}% "
+                    f"{agent.win_rate:>7.1%} {agent._total_bets:>7,} "
+                    f"{bankruptcies[agent.agent_id]:>8}"
+                )
+
+    except KeyboardInterrupt:
+        click.echo(f"\n\n  Interrupted — saving all agents...")
+        for agent in agents:
+            try:
+                agent.save(state_dir)
+                click.echo(f"  ✓ {agent.agent_id} saved (lifetime_roi={agent.lifetime_roi:+.1f}%)")
+            except Exception as e:
+                click.echo(f"  ✗ {agent.agent_id} failed to save: {e}")
+
+    total_elapsed = _time.perf_counter() - start_time
+    click.echo(f"\n  Total time: {total_elapsed:.1f}s | Agent states saved to {state_dir}/")
+    click.echo(f"{'=' * 80}")
 
     total_elapsed = _time.perf_counter() - start_time
     click.echo(f"\n  Total time: {total_elapsed:.1f}s")
