@@ -947,8 +947,13 @@ def stats(agent_dir: str, top_bets: int, detail: bool):
         win_rate = wins / total_bets if total_bets > 0 else 0.0
         roi = (budget - starting) / starting * 100 if starting > 0 else 0.0
 
-        # Best bet types by ROI
+        # Lifetime ROI from bet_type_stats — never resets on bankruptcy, most reliable metric
         bet_stats = s.get("bet_type_stats", {})
+        life_wagered = sum(bs.get("total_wagered", 0) for bs in bet_stats.values())
+        life_payout = sum(bs.get("total_payout", 0) for bs in bet_stats.values())
+        lifetime_roi = (life_payout - life_wagered) / life_wagered * 100 if life_wagered > 0 else 0.0
+
+        # Per-bet-type performance
         bet_perf = []
         for bt_name, bs in bet_stats.items():
             wagered = bs.get("total_wagered", 0)
@@ -969,6 +974,7 @@ def stats(agent_dir: str, top_bets: int, detail: bool):
                 "budget": budget,
                 "starting_budget": starting,
                 "roi": roi,
+                "lifetime_roi": lifetime_roi,
                 "win_rate": win_rate,
                 "total_bets": total_bets,
                 "generation": generation,
@@ -977,39 +983,44 @@ def stats(agent_dir: str, top_bets: int, detail: bool):
             }
         )
 
-    rows.sort(key=lambda r: r["roi"], reverse=True)
+    # Sort by lifetime ROI — more reliable than snapshot ROI
+    rows.sort(key=lambda r: r["lifetime_roi"], reverse=True)
 
     # --- Leaderboard ---
-    click.echo(f"\n{'=' * 100}")
-    click.echo(f"  AGENT STATISTICS  ({len(rows)} agents from {state_dir})")
-    click.echo(f"{'=' * 100}")
+    click.echo(f"\n{'=' * 115}")
+    click.echo(f"  AGENT STATISTICS  ({len(rows)} agents from {state_dir})  [sorted by Lifetime ROI]")
+    click.echo(f"{'=' * 115}")
     click.echo(
-        f"  {'Agent':<15} {'Gen':>5} {'Budget':>12} {'ROI':>8} {'WinRate':>8} "
-        f"{'Bets':>7} {'Risk':>12} {'Strategy':>10}  Best Bet Types"
+        f"  {'Agent':<15} {'Gen':>5} {'Budget':>12} {'SnapshotROI':>12} {'LifetimeROI':>12} "
+        f"{'WinRate':>8} {'Bets':>7} {'Risk':>12} {'Strategy':>10}  Best Bet Types"
     )
-    click.echo(f"  {'-' * 95}")
+    click.echo(f"  {'-' * 110}")
 
     for r in rows:
         g = r["genome"]
         top = r["bet_perf"][:top_bets]
         top_str = "  ".join(f"{bt}({roi:+.0f}%)" for bt, roi, _, _ in top) if top else "-"
-        roi_str = f"{r['roi']:>+7.1f}%"
+        snap_str = f"{r['roi']:>+10.1f}%"
+        life_str = f"{r['lifetime_roi']:>+10.1f}%"
         click.echo(
             f"  {r['agent_id']:<15} {r['generation']:>5} {r['budget']:>12,} "
-            f"{roi_str:>8} {r['win_rate']:>7.1%} {r['total_bets']:>7,} "
+            f"{snap_str:>12} {life_str:>12} "
+            f"{r['win_rate']:>7.1%} {r['total_bets']:>7,} "
             f"{g.get('risk_profile', '?'):>12} {g.get('primary_strategy', '?'):>10}  {top_str}"
         )
 
-    click.echo(f"{'=' * 100}")
+    click.echo(f"{'=' * 115}")
 
     # --- Aggregate summary ---
     total_bets_all = sum(r["total_bets"] for r in rows)
     alive = sum(1 for r in rows if r["budget"] >= 10_000)
-    avg_roi = sum(r["roi"] for r in rows) / len(rows)
+    avg_lifetime = sum(r["lifetime_roi"] for r in rows) / len(rows)
+    avg_snap = sum(r["roi"] for r in rows) / len(rows)
     best = rows[0]
     click.echo(
-        f"\n  Summary: {alive}/{len(rows)} alive | avg ROI {avg_roi:+.1f}% | "
-        f"total bets {total_bets_all:,} | best: {best['agent_id']} ({best['roi']:+.1f}%)"
+        f"\n  Summary: {alive}/{len(rows)} alive | "
+        f"avg LifetimeROI {avg_lifetime:+.1f}% | avg SnapshotROI {avg_snap:+.1f}% | "
+        f"total bets {total_bets_all:,} | best: {best['agent_id']} (lifetime {best['lifetime_roi']:+.1f}%)"
     )
 
     # --- Aggregate bet type performance ---
@@ -1043,7 +1054,8 @@ def stats(agent_dir: str, top_bets: int, detail: bool):
     if detail:
         for r in rows:
             click.echo(
-                f"\n  [{r['agent_id']}]  gen={r['generation']}  ROI={r['roi']:+.1f}%  "
+                f"\n  [{r['agent_id']}]  gen={r['generation']}  "
+                f"SnapshotROI={r['roi']:+.1f}%  LifetimeROI={r['lifetime_roi']:+.1f}%  "
                 f"budget={r['budget']:,}  bets={r['total_bets']:,}"
             )
             click.echo(f"    {'Bet Type':<20} {'Weight':>7} {'ROI':>8} {'WinRate':>8} {'Bets':>8}")

@@ -215,6 +215,7 @@ def train_single_agent(
             agent.increment_draw_counter()
             if agent.maybe_adapt():
                 logger.info(f"{prefix} Adapted gen={agent._generation}")
+                agent.save(agent_state_dir)
 
         # End of round summary
         round_elapsed = time.perf_counter() - round_start
