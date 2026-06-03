@@ -1263,5 +1263,304 @@ def eval(agent_dir: str, data_path: str | None, top_n: int, agent: str | None):
     click.echo(f"\n{'=' * 90}")
 
 
+@cli.command()
+@click.option("--n-agents", type=int, default=5, help="Number of survival agents")
+@click.option("--rounds", type=int, default=3, help="Passes through data per agent")
+@click.option("--budget", type=int, default=500_000, help="Starting budget per agent")
+@click.option("--bet-size", type=int, default=10_000, help="VND per unit bet")
+@click.option(
+    "--bet-types",
+    type=str,
+    default=None,
+    help="Comma-separated bet types to allow (default: all). "
+    "Options: mot_so,hai_so_trung,ba_so_trung,cong_tong,lon_hoa_nho",
+)
+@click.option("--max-units-draw", type=int, default=5, help="Max units bet per draw")
+@click.option("--max-units-option", type=int, default=3, help="Max units per bet option")
+@click.option("--min-ratio", type=float, default=1.0, help="Min absence_ratio to trigger a bet")
+@click.option(
+    "--agent-dir",
+    type=click.Path(),
+    default="models/bingo18/survival",
+    help="Directory to save/load agent state",
+)
+@click.option("--data-path", type=click.Path(exists=True), default=None, help="Path to bingo18.jsonl")
+@click.option("--fresh", is_flag=True, help="Ignore saved state, start fresh")
+def train_survival(
+    n_agents: int,
+    rounds: int,
+    budget: int,
+    bet_size: int,
+    bet_types: str | None,
+    max_units_draw: int,
+    max_units_option: int,
+    min_ratio: float,
+    agent_dir: str,
+    data_path: str | None,
+    fresh: bool,
+) -> None:
+    """Train absence-based survival agents on historical Bingo18 data.
+
+    Each agent tracks how long every bet option has been absent and bets on
+    overdue outcomes.  More units are allocated to more-overdue options.
+    No digit-prediction model is used — pure pattern-of-absence strategy.
+
+    Examples:
+
+        # Default: 5 agents, 3 rounds, all bet types
+        vietlott-bingo18 train-survival
+
+        # Restrict to specific bet types
+        vietlott-bingo18 train-survival --bet-types mot_so,lon_hoa_nho
+
+        # More aggressive: bet as soon as 0.8× expected gap
+        vietlott-bingo18 train-survival --min-ratio 0.8 --max-units-draw 8
+
+        # Continue from saved state
+        vietlott-bingo18 train-survival --rounds 5
+    """
+    import time as _time
+
+    from machine_learning.bingo18.survival_agent import SurvivalAgent
+
+    state_dir = Path(agent_dir)
+    data_path_obj = Path(data_path) if data_path else DEFAULT_DATA_PATH
+    df = load_data(data_path_obj)
+
+    # Convert to plain Python lists — pandas may return numpy arrays for list columns
+    results_list = [list(r) for r in df["result"].tolist()]
+    totals = df["total"].tolist()
+    large_smalls = df["large_small"].tolist()
+    dates = df["date"].tolist() if "date" in df.columns else [f"draw_{i}" for i in range(len(df))]
+    ids = df["id"].tolist() if "id" in df.columns else [f"{i:07d}" for i in range(len(df))]
+    n_draws = len(results_list)
+
+    # Parse allowed bet types
+    allowed_types: list[BetType] | None = None
+    if bet_types:
+        try:
+            allowed_types = [BetType(bt.strip()) for bt in bet_types.split(",")]
+        except ValueError as e:
+            raise click.BadParameter(f"Unknown bet type: {e}") from e
+
+    # Build diverse agent configs (vary min_absence_ratio and unit limits)
+    def make_agent(idx: int) -> SurvivalAgent:
+        ratio = min_ratio + idx * 0.1
+        return SurvivalAgent(
+            agent_id=f"survival_{idx:03d}",
+            budget=budget,
+            bet_size=bet_size,
+            available_bet_types=allowed_types,
+            max_units_per_draw=max_units_draw,
+            max_units_per_option=max_units_option,
+            min_absence_ratio=ratio,
+        )
+
+    # Load or create agents
+    state_dir.mkdir(parents=True, exist_ok=True)
+    agents: list[SurvivalAgent] = []
+    for i in range(n_agents):
+        filepath = state_dir / f"survival_{i:03d}.json"
+        if not fresh and filepath.exists():
+            try:
+                agents.append(SurvivalAgent.load(filepath))
+                continue
+            except Exception as e:
+                logger.warning(f"Failed to load {filepath.name}: {e}")
+        agents.append(make_agent(i))
+
+    click.echo(f"\n{'=' * 80}")
+    click.echo(f"  SURVIVAL TRAINING  {n_agents} agents × {rounds} rounds  ({n_draws:,} draws)")
+    click.echo(f"  bet_size={bet_size:,}  max_units/draw={max_units_draw}  min_ratio={min_ratio}")
+    click.echo(f"{'=' * 80}")
+
+    start_time = _time.perf_counter()
+
+    for round_num in range(rounds):
+        round_start = _time.perf_counter()
+        bankruptcies = {a.agent_id: 0 for a in agents}
+
+        for i in range(n_draws):
+            for agent in agents:
+                if not agent.is_alive:
+                    bankruptcies[agent.agent_id] += 1
+                    agent.reset_budget()
+                agent.process_draw(results_list[i], totals[i], large_smalls[i], dates[i], ids[i])
+
+        # Save all agents after each round
+        for agent in agents:
+            agent.save(state_dir)
+
+        round_elapsed = _time.perf_counter() - round_start
+        click.echo(f"\n  Round {round_num + 1}/{rounds}  ({round_elapsed:.1f}s)")
+        click.echo(
+            f"  {'Agent':<16} {'Budget':>12} {'SnapshotROI':>12} {'LifetimeROI':>12} "
+            f"{'WinRate':>8} {'Bets':>7} {'Bankrupt':>9}"
+        )
+        click.echo(f"  {'-' * 80}")
+        for agent in sorted(agents, key=lambda a: a.lifetime_roi, reverse=True):
+            click.echo(
+                f"  {agent.agent_id:<16} {agent.budget:>12,} "
+                f"{agent.roi:>+11.1f}% {agent.lifetime_roi:>+11.1f}% "
+                f"{agent.win_rate:>7.1%} {agent._total_bets:>7,} "
+                f"{bankruptcies[agent.agent_id]:>8}"
+            )
+
+    total_elapsed = _time.perf_counter() - start_time
+    click.echo(f"\n  Total time: {total_elapsed:.1f}s")
+    click.echo(f"  Agent states saved to {state_dir}/")
+    click.echo(f"{'=' * 80}")
+
+
+@cli.command()
+@click.option(
+    "--agent-dir",
+    type=click.Path(),
+    default="models/bingo18/survival",
+    help="Directory with saved survival agent state",
+)
+@click.option("--detail", is_flag=True, help="Show per-option breakdown for each agent")
+@click.option("--top-options", type=int, default=5, help="Top N bet options to show per agent")
+def survival_stats(agent_dir: str, detail: bool, top_options: int) -> None:
+    """Show statistics for saved survival agents.
+
+    Reads agent JSON files and prints a leaderboard sorted by lifetime ROI
+    (most reliable metric, accumulated across all draws and bankruptcies).
+
+    Examples:
+
+        vietlott-bingo18 survival-stats
+        vietlott-bingo18 survival-stats --detail --top-options 10
+    """
+    import json
+
+    state_dir = Path(agent_dir)
+    files = sorted(state_dir.glob("survival_*.json"))
+
+    if not files:
+        click.echo(f"No survival agent files found in {state_dir}")
+        return
+
+    rows = []
+    for filepath in files:
+        try:
+            with filepath.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            click.echo(f"  [WARN] {filepath.name}: {e}")
+            continue
+
+        s = data.get("state", {})
+        budget = data.get("budget", 0)
+        starting = s.get("starting_budget", budget)
+        snapshot_roi = (budget - starting) / starting * 100 if starting > 0 else 0.0
+
+        opt_states = s.get("option_states", {})
+        total_wagered = sum(v.get("total_wagered", 0) for v in opt_states.values())
+        total_payout = sum(v.get("total_payout", 0) for v in opt_states.values())
+        lifetime_roi = (total_payout - total_wagered) / total_wagered * 100 if total_wagered > 0 else 0.0
+
+        # Top options by absence_ratio (most overdue right now)
+        option_rows = []
+        for key_str, od in opt_states.items():
+            eg = od.get("expected_gap", 1)
+            dsw = od.get("draws_since_win", 0)
+            ratio = dsw / eg if eg > 0 else 0
+            wagered = od.get("total_wagered", 0)
+            payout = od.get("total_payout", 0)
+            bets = od.get("total_bets", 0)
+            opt_roi = (payout - wagered) / wagered * 100 if wagered > 0 else 0.0
+            option_rows.append((key_str, ratio, dsw, eg, opt_roi, bets))
+
+        option_rows.sort(key=lambda x: x[1], reverse=True)
+
+        rows.append(
+            {
+                "agent_id": data.get("agent_id", "?"),
+                "budget": budget,
+                "starting": starting,
+                "snapshot_roi": snapshot_roi,
+                "lifetime_roi": lifetime_roi,
+                "total_draws": s.get("total_draws", 0),
+                "total_bets": s.get("total_bets", 0),
+                "wins": s.get("wins", 0),
+                "min_ratio": data.get("min_absence_ratio", 1.0),
+                "max_units_draw": data.get("max_units_per_draw", 5),
+                "option_rows": option_rows,
+            }
+        )
+
+    if not rows:
+        click.echo("No valid agent files found.")
+        return
+
+    rows.sort(key=lambda r: r["lifetime_roi"], reverse=True)
+
+    click.echo(f"\n{'=' * 105}")
+    click.echo(f"  SURVIVAL AGENT STATISTICS  ({len(rows)} agents from {state_dir})  [sorted by Lifetime ROI]")
+    click.echo(f"{'=' * 105}")
+    click.echo(
+        f"  {'Agent':<16} {'Budget':>12} {'SnapshotROI':>12} {'LifetimeROI':>12} "
+        f"{'WinRate':>8} {'Bets':>7} {'Draws':>7} {'MinRatio':>9}"
+    )
+    click.echo(f"  {'-' * 90}")
+
+    for r in rows:
+        wr = r["wins"] / r["total_bets"] if r["total_bets"] > 0 else 0.0
+        click.echo(
+            f"  {r['agent_id']:<16} {r['budget']:>12,} "
+            f"{r['snapshot_roi']:>+11.1f}% {r['lifetime_roi']:>+11.1f}% "
+            f"{wr:>7.1%} {r['total_bets']:>7,} {r['total_draws']:>7,} "
+            f"{r['min_ratio']:>9.2f}"
+        )
+
+    click.echo(f"{'=' * 105}")
+
+    # Aggregate by bet option
+    agg: dict[str, dict] = {}
+    for r in rows:
+        for key_str, _, _, _, _, _ in r["option_rows"]:
+            if key_str not in agg:
+                agg[key_str] = {"wagered": 0, "payout": 0, "bets": 0}
+    for filepath in files:
+        try:
+            with filepath.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            for key_str, od in data.get("state", {}).get("option_states", {}).items():
+                if key_str not in agg:
+                    agg[key_str] = {"wagered": 0, "payout": 0, "bets": 0}
+                agg[key_str]["wagered"] += od.get("total_wagered", 0)
+                agg[key_str]["payout"] += od.get("total_payout", 0)
+                agg[key_str]["bets"] += od.get("total_bets", 0)
+        except Exception:
+            pass
+
+    agg_rows = [
+        (k, (v["payout"] - v["wagered"]) / v["wagered"] * 100, v["bets"]) for k, v in agg.items() if v["wagered"] > 0
+    ]
+    agg_rows.sort(key=lambda x: x[1], reverse=True)
+
+    click.echo(f"\n  BET OPTION PERFORMANCE (aggregate, top 10 and bottom 5)")
+    click.echo(f"  {'Option':<30} {'ROI':>8} {'Total Bets':>12}")
+    click.echo(f"  {'-' * 55}")
+    for key_str, roi, bets in agg_rows[:10]:
+        click.echo(f"  {key_str:<30} {roi:>+7.1f}% {bets:>12,}")
+    if len(agg_rows) > 15:
+        click.echo(f"  {'...':30}")
+        for key_str, roi, bets in agg_rows[-5:]:
+            click.echo(f"  {key_str:<30} {roi:>+7.1f}% {bets:>12,}")
+
+    if detail:
+        for r in rows:
+            click.echo(
+                f"\n  [{r['agent_id']}]  snapshot={r['snapshot_roi']:+.1f}%  "
+                f"lifetime={r['lifetime_roi']:+.1f}%  bets={r['total_bets']:,}"
+            )
+            click.echo(f"  Most overdue right now (top {top_options}):")
+            click.echo(f"    {'Option':<30} {'Absence':>8} {'Draws':>7} {'ExpGap':>8} {'ROI':>8} {'Bets':>6}")
+            for key_str, ratio, dsw, eg, opt_roi, bets in r["option_rows"][:top_options]:
+                click.echo(f"    {key_str:<30} {ratio:>8.2f}× {dsw:>7} {eg:>8.1f} {opt_roi:>+7.1f}% {bets:>6,}")
+
+
 if __name__ == "__main__":
     cli()
