@@ -1447,15 +1447,17 @@ def train_survival(
 
             for i in range(n_draws):
                 for agent in agents:
+                    just_reset = False
                     if not agent.is_alive:
                         bankruptcies[agent.agent_id] += 1
                         agent.reset_budget()
+                        just_reset = True
 
                     outcomes = agent.process_draw(
                         results_list[i], totals[i], large_smalls[i], dates[i], ids[i]
                     )
 
-                    if agent.agent_id in watched and outcomes:
+                    if agent.agent_id in watched and outcomes and not just_reset:
                         _print_decision(
                             agent, results_list[i], totals[i],
                             large_smalls[i], ids[i], outcomes,
