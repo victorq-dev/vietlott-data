@@ -73349,3 +73349,15 @@
 {"date":"2026-06-03","id":"0170012","result":[1,2,4],"total":7,"large_small":"Nhỏ","process_time":"2026-06-03T09:28:29.140979+07:00"}
 {"date":"2026-06-03","id":"0170013","result":[3,6,5],"total":14,"large_small":"Lớn","process_time":"2026-06-03T09:28:29.140979+07:00"}
 {"date":"2026-06-03","id":"0170014","result":[1,6,4],"total":11,"large_small":"Hòa","process_time":"2026-06-03T09:28:29.140979+07:00"}
+{"date":"2026-06-04","id":"0170275","result":[6,4,4],"total":14,"large_small":"Lớn","process_time":"2026-06-04T20:45:13.161740+07:00"}
+{"date":"2026-06-04","id":"0170276","result":[3,1,5],"total":9,"large_small":"Nhỏ","process_time":"2026-06-04T20:45:13.161740+07:00"}
+{"date":"2026-06-04","id":"0170277","result":[2,5,1],"total":8,"large_small":"Nhỏ","process_time":"2026-06-04T20:45:13.161740+07:00"}
+{"date":"2026-06-04","id":"0170278","result":[5,2,1],"total":8,"large_small":"Nhỏ","process_time":"2026-06-04T20:45:13.161740+07:00"}
+{"date":"2026-06-04","id":"0170279","result":[6,5,1],"total":12,"large_small":"Lớn","process_time":"2026-06-04T20:45:13.161740+07:00"}
+{"date":"2026-06-04","id":"0170280","result":[4,5,3],"total":12,"large_small":"Lớn","process_time":"2026-06-04T20:45:13.161740+07:00"}
+{"date":"2026-06-04","id":"0170281","result":[1,5,5],"total":11,"large_small":"Hòa","process_time":"2026-06-04T20:45:13.183684+07:00"}
+{"date":"2026-06-04","id":"0170282","result":[1,6,3],"total":10,"large_small":"Hòa","process_time":"2026-06-04T20:45:13.183684+07:00"}
+{"date":"2026-06-04","id":"0170283","result":[2,6,6],"total":14,"large_small":"Lớn","process_time":"2026-06-04T20:45:13.183684+07:00"}
+{"date":"2026-06-04","id":"0170284","result":[1,5,1],"total":7,"large_small":"Nhỏ","process_time":"2026-06-04T20:45:13.183684+07:00"}
+{"date":"2026-06-04","id":"0170285","result":[3,6,4],"total":13,"large_small":"Lớn","process_time":"2026-06-04T20:45:13.183684+07:00"}
+{"date":"2026-06-04","id":"0170286","result":[3,1,3],"total":7,"large_small":"Nhỏ","process_time":"2026-06-04T20:45:13.183684+07:00"}
