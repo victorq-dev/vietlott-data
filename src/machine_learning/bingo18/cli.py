@@ -1652,33 +1652,320 @@ def survival_stats(agent_dir: str, detail: bool, top_options: int) -> None:
                 click.echo(f"    {key_str:<30} {ratio:>8.2f}× {dsw:>7} {eg:>8.1f} {opt_roi:>+7.1f}% {bets:>6,}")
 
 
+def _ev_backtest_run(args: tuple) -> dict:
+    """Top-level worker for parallel grid-search backtests."""
+    src_dir, rows, window, min_ev, min_edge, blend_alpha, single_ev_gap, max_bets, budget, bet_size, safe_bets_only = (
+        args
+    )
+    import sys
+
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+    from machine_learning.bingo18.ev_agent import EVAgent
+
+    agent = EVAgent(
+        agent_id="bt",
+        budget=budget,
+        bet_size=bet_size,
+        window=window,
+        min_ev_per_10k=min_ev,
+        min_edge_over_fair=min_edge,
+        blend_alpha=blend_alpha,
+        single_ev_gap=single_ev_gap,
+        max_bets_per_draw=max_bets,
+        safe_bets_only=safe_bets_only,
+    )
+    agent.warm_up([list(r["result"]) for r in rows[:window]])
+
+    from collections import Counter
+
+    bt_counter: Counter = Counter()
+    draws_bet = 0
+    bankruptcies = 0
+    for r in rows[window:]:
+        # Auto-reset budget on bankruptcy so entire dataset contributes to ROI stats.
+        if not agent.is_alive:
+            agent.budget = budget
+            bankruptcies += 1
+        out = agent.process_draw(list(r["result"]), int(r["total"]), r["large_small"], r["date"], r["id"])
+        if out:
+            draws_bet += 1
+            for o in out:
+                bt_counter[str(o["bet_type"].value)] += 1
+
+    n_eval = len(rows) - window
+    return {
+        "window": window,
+        "blend": blend_alpha,
+        "min_ev": min_ev,
+        "min_edge": min_edge,
+        "safe_bets_only": safe_bets_only,
+        "n_eval": n_eval,
+        "draws_bet": draws_bet,
+        "bet_rate": draws_bet / n_eval * 100 if n_eval else 0.0,
+        "total_bets": agent._total_bets,
+        "win_rate": agent.win_rate * 100,
+        "roi": agent.lifetime_roi,
+        "bankruptcies": bankruptcies,
+        "bt_counter": dict(bt_counter),
+    }
+
+
+@cli.command("backtest-ev")
+@click.option("--data-path", type=click.Path(), default=None, help="Historical data file (default: data/bingo18.jsonl)")
+@click.option("--budget", type=int, default=1_000_000, help="Starting budget in VND")
+@click.option("--bet-size", type=int, default=10_000)
+@click.option("--window", type=int, default=100, help="Rolling window size")
+@click.option("--min-ev", "min_ev_per_10k", type=float, default=-4_400.0, help="Min EV per 10k threshold")
+@click.option(
+    "--min-edge",
+    "min_edge_over_fair",
+    type=float,
+    default=None,
+    help="Min edge over fair-dice EV to bet. 0=any improvement, 1000=clear signal. Overrides --min-ev.",
+)
+@click.option("--blend-alpha", type=float, default=0.5, help="Fair-dice blend weight (0=pure empirical, 1=always fair)")
+@click.option("--single-ev-gap", type=float, default=200.0)
+@click.option("--max-bets", type=int, default=2)
+@click.option(
+    "--safe-bets/--no-safe-bets",
+    "safe_bets_only",
+    default=True,
+    help="Restrict to high-win-rate bets only (mot_so, lon_hoa_nho, cong_tong 7-14). Prevents fast bankruptcy. Default: on.",
+)
+@click.option("--grid", is_flag=True, help="Run grid search over min_ev × blend_alpha × window")
+@click.option(
+    "--last-n",
+    type=int,
+    default=5_000,
+    help="For --grid: evaluate on last N draws (default 5000). 0 = full dataset.",
+)
+@click.option("--top", type=int, default=15, help="Rows to show in grid results")
+@click.option("--workers", type=int, default=4, help="Parallel workers for --grid")
+def backtest_ev(
+    data_path: str | None,
+    budget: int,
+    bet_size: int,
+    window: int,
+    min_ev_per_10k: float,
+    min_edge_over_fair: float | None,
+    blend_alpha: float,
+    single_ev_gap: float,
+    max_bets: int,
+    safe_bets_only: bool,
+    grid: bool,
+    last_n: int,
+    top: int,
+    workers: int,
+) -> None:
+    """Backtest EVAgent on historical Bingo18 data.
+
+    Single run uses the full dataset (walk-forward, no look-ahead).
+    Grid search sweeps min_ev × blend_alpha × window on the last N draws.
+
+    With --safe-bets (default), the agent only considers mot_so, lon_hoa_nho,
+    and cong_tong totals 7-14. These all have >7% win rate, which prevents
+    the fast bankruptcy that ba_so_trung (0.46% win rate) causes.
+
+    With --min-ev=-4400 (default), the agent bets whenever rolling-frequency
+    EV is above -4400. On fair dice, mot_so EV ≈ -4306 so it passes; this
+    gives a natural ~40-100% bet rate depending on blend.
+
+    Examples:
+
+        # Single run, safe pool, moderate threshold
+        vietlott-bingo18 backtest-ev --blend-alpha 0.3
+
+        # Always-bet mode (min-ev very permissive)
+        vietlott-bingo18 backtest-ev --min-ev -999999
+
+        # Grid search over min_ev × blend × window
+        vietlott-bingo18 backtest-ev --grid
+
+        # Grid, full dataset (slow)
+        vietlott-bingo18 backtest-ev --grid --last-n 0
+    """
+    import concurrent.futures
+
+    data_path_obj = Path(data_path) if data_path else DEFAULT_DATA_PATH
+    if not data_path_obj.exists():
+        click.echo(f"Data file not found: {data_path_obj}")
+        return
+
+    all_rows = pl.read_ndjson(data_path_obj).sort("id").to_dicts()
+    src_dir = str(Path(__file__).parent.parent.parent.parent / "src")
+
+    if not grid:
+        # --- Single run on full dataset ---
+        rows = all_rows
+        click.echo(f"\n{'=' * 70}")
+        click.echo("  EVAgent Backtest — single run")
+        click.echo(f"{'=' * 70}")
+        click.echo(f"  Data:    {data_path_obj.name}  ({len(rows)} draws, warm-up: {window})")
+        if min_edge_over_fair is not None:
+            threshold_str = f"min_edge={min_edge_over_fair:+.0f} (over fair)"
+        else:
+            threshold_str = f"min_ev={min_ev_per_10k:+.0f} (absolute)"
+        safe_str = "safe_pool" if safe_bets_only else "all_bets"
+        click.echo(
+            f"  Config:  window={window}  blend={blend_alpha:.2f}  {threshold_str}  max_bets={max_bets}  [{safe_str}]"
+        )
+
+        result = _ev_backtest_run(
+            (
+                src_dir,
+                rows,
+                window,
+                min_ev_per_10k,
+                min_edge_over_fair,
+                blend_alpha,
+                single_ev_gap,
+                max_bets,
+                budget,
+                bet_size,
+                safe_bets_only,
+            )
+        )
+
+        click.echo(f"\n  Evaluated draws:  {result['n_eval']:>8,}")
+        click.echo(f"  Draws with bets:  {result['draws_bet']:>8,}  ({result['bet_rate']:>5.1f}%)")
+        click.echo(f"  Total bets:       {result['total_bets']:>8,}")
+        click.echo(f"  Win rate:         {result['win_rate']:>8.2f}%")
+        click.echo(f"  ROI (lifetime):   {result['roi']:>+8.2f}%")
+        click.echo(f"  Bankruptcies:     {result['bankruptcies']:>8,}")
+
+        if result["bt_counter"]:
+            click.echo("\n  Bets by type:")
+            for bt_val, count in sorted(result["bt_counter"].items(), key=lambda x: -x[1]):
+                pct = count / result["total_bets"] * 100
+                click.echo(f"    {bt_val:<20} {count:>7,}  ({pct:.1f}%)")
+
+        click.echo(f"{'=' * 70}\n")
+
+    else:
+        # --- Grid search over min_ev × blend × window (safe pool) ---
+        # Thresholds around the natural fair-dice EV range (-4306 to -5000) to
+        # control bet frequency: -4300 ≈ only when mot_so has slight positive edge;
+        # -999999 ≈ always bet regardless of rolling frequency.
+        grid_min_ev = [-4_300.0, -4_400.0, -4_600.0, -5_000.0, -999_999.0]
+        grid_blend = [0.1, 0.3, 0.5, 0.7]
+        grid_window = [50, 100, 200]
+
+        n_eval_rows = last_n if last_n > 0 else len(all_rows)
+        max_w = max(grid_window)
+        slice_start = max(0, len(all_rows) - n_eval_rows - max_w)
+        eval_rows = all_rows[slice_start:]
+
+        total_combos = len(grid_min_ev) * len(grid_blend) * len(grid_window)
+        safe_str = "safe_pool" if safe_bets_only else "all_bets"
+        click.echo(f"\n{'=' * 70}")
+        click.echo(
+            f"  EVAgent Grid Search — min_ev × blend × window [{safe_str}]  ({total_combos} combos × ~{min(n_eval_rows, len(eval_rows))} draws)"
+        )
+        click.echo(f"{'=' * 70}")
+
+        job_args = [
+            (src_dir, eval_rows, w, me, None, ba, single_ev_gap, max_bets, budget, bet_size, safe_bets_only)
+            for me in grid_min_ev
+            for ba in grid_blend
+            for w in grid_window
+        ]
+
+        results = []
+        with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_ev_backtest_run, a): a for a in job_args}
+            done = 0
+            for fut in concurrent.futures.as_completed(futures):
+                results.append(fut.result())
+                done += 1
+                click.echo(f"  {done}/{total_combos} done...\r", nl=False)
+
+        click.echo(" " * 30 + "\r", nl=False)  # clear progress line
+        results.sort(key=lambda r: r["roi"], reverse=True)
+
+        # Header
+        click.echo(
+            f"\n  {'min_ev':>8} {'blend':>5} {'win':>4}  {'win%':>6} {'roi%':>8} {'bet_rate%':>9} "
+            f"{'bets':>8} {'bkrpt':>6} {'top_bt':<20}"
+        )
+        click.echo(f"  {'-' * 80}")
+
+        def _row_str(r: dict) -> str:
+            top_bt = max(r["bt_counter"], key=r["bt_counter"].get) if r["bt_counter"] else "—"
+            ev_str = f"{r['min_ev']:+.0f}"
+            return (
+                f"  {ev_str:>8} {r['blend']:>5.2f} {r['window']:>4}  {r['win_rate']:>5.2f}%"
+                f" {r['roi']:>+8.2f}% {r['bet_rate']:>8.1f}%  {r['total_bets']:>8,}"
+                f"  {r['bankruptcies']:>5,}  {top_bt:<20}"
+            )
+
+        for r in results[:top]:
+            click.echo(_row_str(r))
+
+        if len(results) > top:
+            click.echo(f"  {'...'}")
+            for r in results[-5:]:
+                click.echo(_row_str(r))
+
+        best = results[0]
+        click.echo(
+            f"\n  Best ROI:  min_ev={best['min_ev']:+.0f}  blend={best['blend']:.2f}  window={best['window']}  → {best['roi']:+.2f}%  win={best['win_rate']:.2f}%  bet_rate={best['bet_rate']:.1f}%"
+        )
+        click.echo(f"{'=' * 70}\n")
+
+
 @cli.command()
+@click.option(
+    "--agent-type",
+    type=click.Choice(["survival", "ev"]),
+    default="survival",
+    help="Agent type to run (default: survival)",
+)
 @click.option(
     "--agent-dir",
     type=click.Path(),
-    default="models/bingo18/survival",
-    help="Directory with saved survival agent state",
+    default=None,
+    help="Directory with saved agent state (default: models/bingo18/<agent-type>)",
 )
 @click.option("--agent", "agent_id", type=str, default=None, help="Agent ID to use (default: best by lifetime ROI)")
 @click.option("--poll-secs", type=int, default=370, help="Poll interval in seconds (default: 370 ≈ 6 min)")
 @click.option("--dry-run", is_flag=True, help="Do not save agent state after each draw")
-def live_play(agent_dir: str, agent_id: str | None, poll_secs: int, dry_run: bool) -> None:
-    """Run best survival agent against live Bingo18 draws in real-time.
+@click.option("--budget", type=int, default=1_000_000, help="Starting budget for a new EV agent in VND")
+@click.option(
+    "--data-path",
+    type=click.Path(),
+    default=None,
+    help="Historical data file for EV agent warm-up (default: data/bingo18.jsonl)",
+)
+def live_play(
+    agent_type: str,
+    agent_dir: str | None,
+    agent_id: str | None,
+    poll_secs: int,
+    dry_run: bool,
+    budget: int,
+    data_path: str | None,
+) -> None:
+    """Run an agent against live Bingo18 draws in real-time.
 
     Polls the Vietlott API every ~6 minutes for new draws and processes
-    them through the agent. Agent state (absence counters) is saved after
-    each draw so the session can be resumed later.
+    them through the agent. Agent state is saved after each draw so the
+    session can be resumed later.
+
+    Agent types:
+      survival  Absence-based portfolio agent (default)
+      ev        EV-based agent using rolling frequency estimation
 
     Examples:
 
-        # Use best agent automatically
+        # Survival agent, best by ROI
         vietlott-bingo18 live-play
 
-        # Use specific agent, poll every 7 minutes
-        vietlott-bingo18 live-play --agent survival_092 --poll-secs 420
+        # EV agent, create new with 500k budget, warm up from history
+        vietlott-bingo18 live-play --agent-type ev --budget 500000
 
-        # Watch without saving state
-        vietlott-bingo18 live-play --dry-run
+        # Specific EV agent, dry run
+        vietlott-bingo18 live-play --agent-type ev --agent ev_001 --dry-run
     """
     import json as _json
     import time as _time
@@ -1686,46 +1973,88 @@ def live_play(agent_dir: str, agent_id: str | None, poll_secs: int, dry_run: boo
     import cattrs
     import pendulum
     import requests as _requests
-    from bs4 import BeautifulSoup
 
-    from machine_learning.bingo18.survival_agent import SurvivalAgent
     from vietlott.crawler.products.bingo18 import ProductBingo18
-    from vietlott.crawler.requests_helper.fetch import get_vietlott_cookie
     from vietlott.crawler.schema.requests import RequestBingo18
 
-    state_dir = Path(agent_dir)
+    state_dir = Path(agent_dir) if agent_dir else Path(f"models/bingo18/{agent_type}")
+    state_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- Pick agent ---
-    if agent_id:
-        filepath = state_dir / f"{agent_id}.json"
-        if not filepath.exists():
-            click.echo(f"Agent file not found: {filepath}")
-            return
-    else:
-        files = sorted(state_dir.glob("survival_*.json"))
-        if not files:
-            click.echo(f"No survival agents found in {state_dir}")
-            return
-        best_file, best_roi = None, float("-inf")
-        for f in files:
-            try:
-                d = _json.loads(f.read_text())
-                s = d["state"]
-                opt = s.get("option_states", {})
-                wagered = sum(v["total_wagered"] for v in opt.values())
-                payout = sum(v["total_payout"] for v in opt.values())
-                roi = (payout - wagered) / wagered * 100 if wagered else 0
-                if roi > best_roi:
-                    best_roi, best_file = roi, f
-            except Exception:
-                pass
-        filepath = best_file
+    # --- Load or create agent ---
+    if agent_type == "survival":
+        from machine_learning.bingo18.survival_agent import SurvivalAgent
 
-    agent = SurvivalAgent.load(filepath)
+        if agent_id:
+            filepath = state_dir / f"{agent_id}.json"
+            if not filepath.exists():
+                click.echo(f"Agent file not found: {filepath}")
+                return
+        else:
+            files = sorted(state_dir.glob("survival_*.json"))
+            if not files:
+                click.echo(f"No survival agents found in {state_dir}")
+                return
+            best_file, best_roi = None, float("-inf")
+            for f in files:
+                try:
+                    d = _json.loads(f.read_text())
+                    s = d["state"]
+                    opt = s.get("option_states", {})
+                    wagered = sum(v["total_wagered"] for v in opt.values())
+                    payout = sum(v["total_payout"] for v in opt.values())
+                    roi = (payout - wagered) / wagered * 100 if wagered else 0
+                    if roi > best_roi:
+                        best_roi, best_file = roi, f
+                except Exception:
+                    pass
+            filepath = best_file
+
+        agent = SurvivalAgent.load(filepath)
+        agent_info = f"min_ratio={agent.min_absence_ratio:.2f}  bet_size={agent.bet_size:,}"
+
+    else:  # ev
+        from machine_learning.bingo18.ev_agent import EVAgent
+
+        if agent_id:
+            filepath = state_dir / f"{agent_id}.json"
+            if not filepath.exists():
+                click.echo(f"Agent file not found: {filepath}")
+                return
+            agent = EVAgent.load(filepath)
+        else:
+            files = sorted(state_dir.glob("ev_*.json"))
+            if files:
+                best_file, best_roi = None, float("-inf")
+                for f in files:
+                    try:
+                        d = _json.loads(f.read_text())
+                        wagered = d.get("_total_wagered", 0)
+                        payout = d.get("_total_payout", 0)
+                        roi = (payout - wagered) / wagered * 100 if wagered else 0
+                        if roi > best_roi:
+                            best_roi, best_file = roi, f
+                    except Exception:
+                        pass
+                agent = EVAgent.load(best_file)
+            else:
+                # Create a fresh EV agent and warm up from historical data
+                new_id = "ev_001"
+                agent = EVAgent(agent_id=new_id, budget=budget)
+                data_path_obj = Path(data_path) if data_path else DEFAULT_DATA_PATH
+                if data_path_obj.exists():
+                    import polars as pl
+
+                    raw = pl.read_ndjson(data_path_obj)
+                    recent = raw.sort("id", descending=False).tail(agent.window)
+                    warm_draws = [list(row["result"]) for row in recent.to_dicts()]
+                    agent.warm_up(warm_draws)
+                    click.echo(f"  Warmed up with {len(warm_draws)} historical draws from {data_path_obj.name}")
+
+        agent_info = f"min_ev={agent.min_ev_per_10k:+.0f}/10k  blend={agent.blend_alpha:.2f}  window={agent.window}"
 
     click.echo(f"\n{'=' * 70}")
-    click.echo(f"  LIVE PLAY  [{agent.agent_id}]")
-    click.echo(f"  min_ratio={agent.min_absence_ratio:.2f}  bet_size={agent.bet_size:,}  budget={agent.budget:,}")
+    click.echo(f"  LIVE PLAY  [{agent.agent_id}]  type={agent_type}")
+    click.echo(f"  {agent_info}  bet_size={agent.bet_size:,}  budget={agent.budget:,}")
     click.echo(f"  lifetime_roi={agent.lifetime_roi:+.1f}%  poll_interval={poll_secs}s (~{poll_secs // 60}min)")
     if dry_run:
         click.echo("  [DRY RUN — state not saved]")
@@ -1734,7 +2063,7 @@ def live_play(agent_dir: str, agent_id: str | None, poll_secs: int, dry_run: boo
 
     # --- Fetch helpers ---
     _url = ProductBingo18.url
-    _dummy = ProductBingo18()  # initializes headers + cookies once
+    _dummy = ProductBingo18()
 
     def _fetch_latest(n: int = 3) -> list[dict]:
         """Fetch the N most recent Bingo18 draws from the API."""
@@ -1762,6 +2091,22 @@ def live_play(agent_dir: str, agent_id: str | None, poll_secs: int, dry_run: boo
             logger.warning(f"Fetch error: {e}")
             return []
 
+    def _format_outcome(o: dict) -> str:
+        """Format a single bet outcome for display."""
+        bt = o["bet_type"]
+        result_mark = "✓" if o["won"] else "✗"
+        if agent_type == "survival":
+            state = agent._states.get(
+                (
+                    BetType(bt),
+                    o["value"] if bt in ("lon_hoa_nho", "ba_so_trung_any") else int(o["value"]),
+                )
+            )
+            detail = f"{state.draws_since_win}↑" if state else ""
+        else:
+            detail = f"ev:{o['ev']:+.0f}"
+        return f"{bt}:{o['value']}×{o['units']}u({detail}){result_mark}"
+
     # --- Main loop ---
     seen_ids: set[str] = set()
     total_processed = 0
@@ -1784,31 +2129,19 @@ def live_play(agent_dir: str, agent_id: str | None, poll_secs: int, dry_run: boo
                 outcomes = agent.process_draw(digits, total, ls, date, draw_id)
                 total_processed += 1
 
-                # Display
                 ts = pendulum.now().format("HH:mm:ss")
                 if outcomes:
                     net = sum(o["payout"] - o["amount"] for o in outcomes)
-                    parts = []
-                    for o in outcomes:
-                        bt = o["bet_type"]
-                        state = agent._states.get(
-                            (
-                                BetType(bt),
-                                o["value"]
-                                if bt == "lon_hoa_nho"
-                                else (o["value"] if bt == "ba_so_trung_any" else int(o["value"])),
-                            )
-                        )
-                        absence = f"{state.draws_since_win}↑" if state else ""
-                        parts.append(f"{bt}:{o['value']}×{o['units']}u({absence}){'✓' if o['won'] else '✗'}")
+                    parts = [_format_outcome(o) for o in outcomes]
                     click.echo(
                         f"  {ts} #{draw_id} [{','.join(map(str, digits))}] s={total} {ls:<3} | "
                         f"{' '.join(parts)} | net:{net:>+8,} budget:{agent.budget:>10,} roi:{agent.lifetime_roi:>+.1f}%"
                     )
                 else:
+                    skip_reason = "nothing overdue" if agent_type == "survival" else "EV below threshold"
                     click.echo(
                         f"  {ts} #{draw_id} [{','.join(map(str, digits))}] s={total} {ls:<3} | "
-                        f"[skip — nothing overdue] | budget:{agent.budget:>10,}"
+                        f"[skip — {skip_reason}] | budget:{agent.budget:>10,}"
                     )
 
                 if not dry_run:
